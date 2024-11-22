@@ -1,5 +1,5 @@
 /*
- * EasyTest - A header-only util for easy unit testing.
+ * MyTest - A header-only util for unit testing.
  * Copyright 2024-present Daeyeon Jeong (daeyeon.dev@gmail.com)
  *
  * Licensed under the Apache License, Version 2.0.
@@ -82,10 +82,10 @@
    ./your_test "-*TestTimeout*"  // Exclude all tests with Function in the name
 */
 
-class EasyTest {
+class MyTest {
  public:
-  static EasyTest& GetInstance() {
-    static EasyTest instance;
+  static MyTest& GetInstance() {
+    static MyTest instance;
     return instance;
   }
 
@@ -385,7 +385,7 @@ class EasyTest {
               << default_timeout << ")\n"
               << "  -c            : Disable color output\n"
               << "  -h            : Show this help message\n\n"
-              << "Driven by EasyTest (v" << kCalVersion << ")\n";
+              << "Driven by MyTest (v" << kCalVersion << ")\n";
   }
 
   int default_timeout_;
@@ -396,27 +396,27 @@ class EasyTest {
   std::unordered_map<std::string, std::function<void()>> test_after_each_;
   std::unordered_map<std::string, std::function<void()>> test_before_;
   std::unordered_map<std::string, std::function<void()>> test_after_;
-  EasyTest() : default_timeout_(kDefaultTimeoutMS) {}
-  EasyTest(const EasyTest&) = delete;
-  EasyTest& operator=(const EasyTest&) = delete;
+  MyTest() : default_timeout_(kDefaultTimeoutMS) {}
+  MyTest(const MyTest&) = delete;
+  MyTest& operator=(const MyTest&) = delete;
 };
 
 #define TEST0(group, name)                                                     \
   void group##name();                                                          \
   struct group##name##_Register {                                              \
     group##name##_Register() {                                                 \
-      EasyTest::GetInstance().RegisterTest(#group ":" #name, group##name);     \
+      MyTest::GetInstance().RegisterTest(#group ":" #name, group##name);       \
     }                                                                          \
   } group##name##_register;                                                    \
   void group##name()
 
 #define TEST(group, name, ...)                                                 \
   void group##name##_impl();                                                   \
-  std::future<void> group##name(                                               \
-      int timeout_ms = EasyTest::GetInstance().default_timeout());             \
+  std::future<void> group##name(int timeout_ms =                               \
+                                    MyTest::GetInstance().default_timeout());  \
   struct group##name##_Register {                                              \
     group##name##_Register() {                                                 \
-      EasyTest::GetInstance().RegisterTest(                                    \
+      MyTest::GetInstance().RegisterTest(                                      \
           #group ":" #name, []() { return group##name(__VA_ARGS__); });        \
     }                                                                          \
   } group##name##_register;                                                    \
@@ -433,7 +433,7 @@ class EasyTest {
     }).detach();                                                               \
     if (future.wait_for(std::chrono::milliseconds(timeout_ms)) ==              \
         std::future_status::timeout) {                                         \
-      throw EasyTest::TestTimeoutException(#group ":" #name);                  \
+      throw MyTest::TestTimeoutException(#group ":" #name);                    \
     }                                                                          \
     future.get();                                                              \
     return future;                                                             \
@@ -442,11 +442,11 @@ class EasyTest {
 
 #define TEST_ASYNC(group, name, ...)                                           \
   void group##name##_impl(std::function<void()> done);                         \
-  std::future<void> group##name(                                               \
-      int timeout_ms = EasyTest::GetInstance().default_timeout());             \
+  std::future<void> group##name(int timeout_ms =                               \
+                                    MyTest::GetInstance().default_timeout());  \
   struct group##name##_Register {                                              \
     group##name##_Register() {                                                 \
-      EasyTest::GetInstance().RegisterAsyncTest(                               \
+      MyTest::GetInstance().RegisterAsyncTest(                                 \
           #group ":" #name, []() { return group##name(__VA_ARGS__); });        \
     }                                                                          \
   } group##name##_register;                                                    \
@@ -457,7 +457,7 @@ class EasyTest {
     std::thread([done]() { group##name##_impl(done); }).detach();              \
     if (future.wait_for(std::chrono::milliseconds(timeout_ms)) ==              \
         std::future_status::timeout) {                                         \
-      throw EasyTest::TestTimeoutException(#group ":" #name);                  \
+      throw MyTest::TestTimeoutException(#group ":" #name);                    \
     }                                                                          \
     return future;                                                             \
   }                                                                            \
@@ -467,8 +467,8 @@ class EasyTest {
   void group##_BeforeEach();                                                   \
   struct group##_BeforeEach_Register {                                         \
     group##_BeforeEach_Register() {                                            \
-      EasyTest::GetInstance().RegisterTestBeforeEach(#group,                   \
-                                                     group##_BeforeEach);      \
+      MyTest::GetInstance().RegisterTestBeforeEach(#group,                     \
+                                                   group##_BeforeEach);        \
     }                                                                          \
   } group##_BeforeEach_register;                                               \
   void group##_BeforeEach()
@@ -477,8 +477,7 @@ class EasyTest {
   void group##_AfterEach();                                                    \
   struct group##_AfterEach_Register {                                          \
     group##_AfterEach_Register() {                                             \
-      EasyTest::GetInstance().RegisterTestAfterEach(#group,                    \
-                                                    group##_AfterEach);        \
+      MyTest::GetInstance().RegisterTestAfterEach(#group, group##_AfterEach);  \
     }                                                                          \
   } group##_AfterEach_register;                                                \
   void group##_AfterEach()
@@ -487,7 +486,7 @@ class EasyTest {
   void group##_Before();                                                       \
   struct group##_Before_Register {                                             \
     group##_Before_Register() {                                                \
-      EasyTest::GetInstance().RegisterTestBefore(#group, group##_Before);      \
+      MyTest::GetInstance().RegisterTestBefore(#group, group##_Before);        \
     }                                                                          \
   } group##_Before_register;                                                   \
   void group##_Before()
@@ -496,15 +495,14 @@ class EasyTest {
   void group##_After();                                                        \
   struct group##_After_Register {                                              \
     group##_After_Register() {                                                 \
-      EasyTest::GetInstance().RegisterTestAfter(#group, group##_After);        \
+      MyTest::GetInstance().RegisterTestAfter(#group, group##_After);          \
     }                                                                          \
   } group##_After_register;                                                    \
   void group##_After()
 
-#define TEST_SKIP(msg) throw EasyTest::TestSkipException(msg)
+#define TEST_SKIP(msg) throw MyTest::TestSkipException(msg)
 
-#define RUN_ALL_TESTS(argc, argv)                                              \
-  EasyTest::GetInstance().RunAllTests(argc, argv)
+#define RUN_ALL_TESTS(argc, argv) MyTest::GetInstance().RunAllTests(argc, argv)
 
 #ifdef USE_DEFAULT_ENTRY
 int main(int argc, char* argv[]) {
