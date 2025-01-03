@@ -33,6 +33,11 @@
     ASSERT_EQ(1, global);
   }
 
+  TEST0(Subject, SyncTestOnCurrentThread) {
+    // Runs on current thread; others on separate threads until timeout.
+    ASSERT_EQ(1, global);
+  }
+
   TEST_ASYNC(Subject, ASyncTest) {
     std::this_thread::sleep_for(std::chrono::seconds(1));
     ASSERT_EQ(1, global);
@@ -143,6 +148,7 @@ class MyTest {
 
     // Parse CLI arguments
     bool use_color = true;
+    bool silent = false;
     std::vector<std::regex> include_patterns;
     std::vector<std::regex> exclude_patterns;
 
@@ -150,15 +156,22 @@ class MyTest {
       std::string arg = argv[i];
       if (arg == "-p" && i + 1 < argc) {
         std::string pattern = argv[++i];
-        if (pattern[0] == '-') {
-          exclude_patterns.emplace_back(pattern.substr(1));
-        } else {
-          include_patterns.emplace_back(pattern);
+        try {
+          if (pattern[0] == '-') {
+            exclude_patterns.emplace_back(pattern.substr(1));
+          } else {
+            include_patterns.emplace_back(pattern);
+          }
+        } catch (const std::exception& e) {
+          std::cerr << e.what() << '\n';
+          return 1;
         }
       } else if (arg == "-t" && i + 1 < argc) {
         default_timeout = std::stoi(argv[++i]);
       } else if (arg == "-c") {
         use_color = false;
+      } else if (arg == "-s") {
+        silent = true;
       } else if (arg == "-h") {
         PrintUsage(argv[0], default_timeout);
         return 0;
@@ -223,6 +236,16 @@ class MyTest {
           "%s[ RUN      ]%s %s\n", colors[GREEN], colors[RESET], name.c_str());
 
       try {
+        auto _ = OnScopeLeave::create([&silent]() {
+          if (silent) {
+            freopen("/dev/tty", "w", stdout);
+            freopen("/dev/tty", "w", stderr);
+          }
+        });
+        if (silent) {
+          freopen("/dev/null", "w", stdout);
+          freopen("/dev/null", "w", stderr);
+        }
         if (test_before_each_.count(group_name)) {
           test_before_each_[group_name]();
         }
@@ -291,6 +314,17 @@ class MyTest {
           "%s[ RUN      ]%s %s\n", colors[GREEN], colors[RESET], name.c_str());
 
       try {
+        auto _ = OnScopeLeave::create([&silent]() {
+          if (silent) {
+            freopen("/dev/tty", "w", stdout);
+            freopen("/dev/tty", "w", stderr);
+          }
+        });
+        if (silent) {
+          freopen("/dev/null", "w", stdout);
+          freopen("/dev/null", "w", stderr);
+        }
+
         if (test_before_each_.count(group_name)) {
           test_before_each_[group_name]();
         }
@@ -375,6 +409,38 @@ class MyTest {
   static constexpr int kDefaultTimeoutMS = 10000;
   static constexpr const char* kCalVersion = "24.11.0";
 
+#if !defined(WARN_UNUSED_RESULT) && defined(__GNUC__)
+#define WARN_UNUSED_RESULT __attribute__((__warn_unused_result__))
+#else
+#define WARN_UNUSED_RESULT
+#endif
+
+  class OnScopeLeave {
+   public:
+    using Function = std::function<void()>;
+
+    OnScopeLeave(const OnScopeLeave& other) = delete;
+    OnScopeLeave& operator=(const OnScopeLeave& other) = delete;
+
+    explicit OnScopeLeave(Function&& function)
+        : function_(std::move(function)) {}
+    OnScopeLeave(OnScopeLeave&& other) : function_(std::move(other.function_)) {
+      other.function_ = nullptr;
+    }
+    ~OnScopeLeave() {
+      if (function_) {
+        function_();
+      }
+    }
+
+    static WARN_UNUSED_RESULT OnScopeLeave create(Function&& function) {
+      return OnScopeLeave(std::move(function));
+    }
+
+   private:
+    Function function_;
+  };
+
   void PrintUsage(const char* name, int default_timeout) {
     std::cout << "Usage: " << name << " [options]\n"
               << "Options:\n"
@@ -384,6 +450,7 @@ class MyTest {
                  "milliseconds, default: "
               << default_timeout << ")\n"
               << "  -c            : Disable color output\n"
+              << "  -s            : Silent mode, suppress stdout and stderr\n"
               << "  -h            : Show this help message\n\n"
               << "Driven by MyTest (v" << kCalVersion << ")\n";
   }
@@ -504,7 +571,7 @@ class MyTest {
 
 #define RUN_ALL_TESTS(argc, argv) MyTest::GetInstance().RunAllTests(argc, argv)
 
-#ifdef USE_DEFAULT_ENTRY
+#ifdef MYTEST_CONFIG_USE_MAIN
 int main(int argc, char* argv[]) {
   return RUN_ALL_TESTS(argc, argv);
 }
@@ -512,15 +579,14 @@ int main(int argc, char* argv[]) {
 
 #ifndef __FILE_NAME__
 #define __FILE_NAME__                                                          \
-  (strrchr(__FILE__, '/') ? strrchr(__FILE__, '/') + 1 : __FILE__)
+  std::string((strrchr(__FILE__, '/') ? strrchr(__FILE__, '/') + 1 : __FILE__))
 #endif
 
-#define LOC_ "(" __FILE_NAME__ ":" + std::to_string(__LINE__) + ")"
-#define LOC
+#define __LOC__ "(" + __FILE_NAME__ + ":" + std::to_string(__LINE__) + ")"
 
 #define FORMAT_ERROR_MESSAGE(x, cond_str, y, msg)                              \
   std::stringstream ss;                                                        \
-  ss << msg << " " LOC << "\n";                                                \
+  ss << msg << std::string(" ") + __LOC__ << "\n";                             \
   ss << "  Expected : (" << #x << " " cond_str " " << #y << ")\n";             \
   ss << "    Actual : (" << x << " " cond_str " " << y << ")";
 
