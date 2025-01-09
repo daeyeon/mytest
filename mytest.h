@@ -172,7 +172,9 @@ class MyTest {
         use_color = false;
       } else if (arg == "-s") {
         silent = true;
-      } else if (arg == "-h") {
+      } else if (arg == "-f") {
+        force_ = true;
+      } else if (arg == "-h" || arg == "--help") {
         PrintUsage(argv[0], default_timeout);
         return 0;
       }
@@ -404,6 +406,7 @@ class MyTest {
   }
 
   int default_timeout() { return default_timeout_; }
+  bool force() { return force_; }
 
  private:
   static constexpr int kDefaultTimeoutMS = 10000;
@@ -450,12 +453,14 @@ class MyTest {
                  "milliseconds, default: "
               << default_timeout << ")\n"
               << "  -c            : Disable color output\n"
+              << "  -f            : Force mode, run all, including skipped tests\n"
               << "  -s            : Silent mode, suppress stdout and stderr\n"
-              << "  -h            : Show this help message\n\n"
+              << "  -h, --help    : Show this help message\n\n"
               << "Driven by MyTest (v" << kCalVersion << ")\n";
   }
 
   int default_timeout_;
+  bool force_ = false;
   std::vector<std::pair<std::string, std::function<void()>>> sync_tests_;
   std::vector<std::pair<std::string, std::function<std::future<void>()>>>
       async_tests_;
@@ -567,7 +572,12 @@ class MyTest {
   } group##_After_register;                                                    \
   void group##_After()
 
-#define TEST_SKIP(msg) throw MyTest::TestSkipException(msg)
+#define TEST_SKIP(msg)                                                         \
+  do {                                                                         \
+    if (!MyTest::GetInstance().force()) {                                      \
+      throw MyTest::TestSkipException(msg);                                    \
+    }                                                                          \
+  } while (0)
 
 #define RUN_ALL_TESTS(argc, argv) MyTest::GetInstance().RunAllTests(argc, argv)
 
