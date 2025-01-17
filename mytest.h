@@ -610,9 +610,13 @@ int main(int argc, char* argv[]) {
     }                                                                          \
   }
 
-#define EXPECT(cond, x, c, y, m) CHECK_CONDITION(!(cond), x, #c, y, m, false)
-#define ASSERT(cond, x, c, y, m) CHECK_CONDITION(!(cond), x, #c, y, m, true)
-#define EXPECT_EQ(x, y) EXPECT((x) == (y), x, ==, y, "EXPECT_EQ failed")
-#define EXPECT_NE(x, y) EXPECT((x) != (y), x, !=, y, "EXPECT_NE failed")
-#define ASSERT_EQ(x, y) ASSERT((x) == (y), x, ==, y, "ASSERT_EQ failed")
-#define ASSERT_NE(x, y) ASSERT((x) != (y), x, !=, y, "ASSERT_NE failed")
+#define EXPECT_(cond, x, c, y, m) CHECK_CONDITION(!(cond), x, #c, y, m, false)
+#define ASSERT_(cond, x, c, y, m) CHECK_CONDITION(!(cond), x, #c, y, m, true)
+#define EXPECT_EQ(x, y) EXPECT_((x) == (y), x, ==, y, "EXPECT_EQ failed")
+#define EXPECT_NE(x, y) EXPECT_((x) != (y), x, !=, y, "EXPECT_NE failed")
+#define ASSERT_EQ(x, y) ASSERT_((x) == (y), x, ==, y, "ASSERT_EQ failed")
+#define ASSERT_NE(x, y) ASSERT_((x) != (y), x, !=, y, "ASSERT_NE failed")
+
+#define EXPECT(cond) EXPECT_EQ(static_cast<bool>(cond), true)
+#define ASSERT(cond) ASSERT_EQ(static_cast<bool>(cond), true)
+
