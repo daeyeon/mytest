@@ -143,6 +143,8 @@ class MyTest {
     test_after_[group_name] = func;
   }
 
+  void MarkExpectPassed(bool value) { expect_passed_ = value; }
+
   int RunAllTests(int argc, char* argv[]) {
     int default_timeout = default_timeout_;
 
@@ -251,11 +253,17 @@ class MyTest {
         if (test_before_each_.count(group_name)) {
           test_before_each_[group_name]();
         }
+        expect_passed_ = true;
         test();
         if (test_after_each_.count(group_name)) {
           test_after_each_[group_name]();
         }
-        ++num_success;
+        if (expect_passed_) {
+          ++num_success;
+        } else {
+          ++num_failure;
+          failure = true;
+        }
       } catch (const TestSkipException& e) {
         ++num_skipped;
         skipped = true;
@@ -330,12 +338,18 @@ class MyTest {
         if (test_before_each_.count(group_name)) {
           test_before_each_[group_name]();
         }
+        expect_passed_ = true;
         auto future = test();
         future.get();
         if (test_after_each_.count(group_name)) {
           test_after_each_[group_name]();
         }
-        ++num_success;
+        if (expect_passed_) {
+          ++num_success;
+        } else {
+          ++num_failure;
+          failure = true;
+        }
       } catch (const TestSkipException& e) {
         ++num_skipped;
         skipped = true;
@@ -410,7 +424,7 @@ class MyTest {
 
  private:
   static constexpr int kDefaultTimeoutMS = 10000;
-  static constexpr const char* kCalVersion = "24.11.0";
+  static constexpr const char* kCalVersion = "25.01.0";
 
 #if !defined(WARN_UNUSED_RESULT) && defined(__GNUC__)
 #define WARN_UNUSED_RESULT __attribute__((__warn_unused_result__))
@@ -445,6 +459,7 @@ class MyTest {
   };
 
   void PrintUsage(const char* name, int default_timeout) {
+    // clang-format off
     std::cout << "Usage: " << name << " [options]\n"
               << "Options:\n"
               << "  -p \"pattern\"  : Include tests matching the pattern\n"
@@ -457,10 +472,12 @@ class MyTest {
               << "  -s            : Silent mode, suppress stdout and stderr\n"
               << "  -h, --help    : Show this help message\n\n"
               << "Driven by MyTest (v" << kCalVersion << ")\n";
+    // clang-format on
   }
 
   int default_timeout_;
   bool force_ = false;
+  bool expect_passed_ = true;
   std::vector<std::pair<std::string, std::function<void()>>> sync_tests_;
   std::vector<std::pair<std::string, std::function<std::future<void>()>>>
       async_tests_;
@@ -607,6 +624,7 @@ int main(int argc, char* argv[]) {
       throw std::runtime_error(ss.str());                                      \
     } else {                                                                   \
       std::cout << "\n" << ss.str() << "\n";                                   \
+      MyTest::GetInstance().MarkExpectPassed(false);                           \
     }                                                                          \
   }
 
@@ -619,4 +637,3 @@ int main(int argc, char* argv[]) {
 
 #define EXPECT(cond) EXPECT_EQ(static_cast<bool>(cond), true)
 #define ASSERT(cond) ASSERT_EQ(static_cast<bool>(cond), true)
-
