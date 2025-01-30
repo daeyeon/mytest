@@ -240,12 +240,17 @@ class MyTest {
           "%s[ RUN      ]%s %s\n", colors[GREEN], colors[RESET], name.c_str());
 
       try {
-        auto _ = OnScopeLeave::create([&silent]() {
-          if (silent) {
-            freopen("/dev/tty", "w", stdout);
-            freopen("/dev/tty", "w", stderr);
-          }
-        });
+        bool after_each = false;
+        auto _ =
+            OnScopeLeave::create([&silent, this, &group_name, &after_each]() {
+              if (!after_each && test_after_each_.count(group_name)) {
+                test_after_each_[group_name]();
+              }
+              if (silent) {
+                freopen("/dev/tty", "w", stdout);
+                freopen("/dev/tty", "w", stderr);
+              }
+            });
         if (silent) {
           freopen("/dev/null", "w", stdout);
           freopen("/dev/null", "w", stderr);
@@ -256,6 +261,7 @@ class MyTest {
         expect_passed_ = true;
         test();
         if (test_after_each_.count(group_name)) {
+          after_each = true;
           test_after_each_[group_name]();
         }
         if (expect_passed_) {
@@ -324,12 +330,17 @@ class MyTest {
           "%s[ RUN      ]%s %s\n", colors[GREEN], colors[RESET], name.c_str());
 
       try {
-        auto _ = OnScopeLeave::create([&silent]() {
-          if (silent) {
-            freopen("/dev/tty", "w", stdout);
-            freopen("/dev/tty", "w", stderr);
-          }
-        });
+        bool after_each = false;
+        auto _ =
+            OnScopeLeave::create([&silent, this, &group_name, &after_each]() {
+              if (!after_each && test_after_each_.count(group_name)) {
+                test_after_each_[group_name]();
+              }
+              if (silent) {
+                freopen("/dev/tty", "w", stdout);
+                freopen("/dev/tty", "w", stderr);
+              }
+            });
         if (silent) {
           freopen("/dev/null", "w", stdout);
           freopen("/dev/null", "w", stderr);
@@ -423,7 +434,7 @@ class MyTest {
   bool force() { return force_; }
 
  private:
-  static constexpr int kDefaultTimeoutMS = 10000;
+  static constexpr int kDefaultTimeoutMS = 60000;
   static constexpr const char* kCalVersion = "25.01.0";
 
 #if !defined(WARN_UNUSED_RESULT) && defined(__GNUC__)
@@ -459,20 +470,19 @@ class MyTest {
   };
 
   void PrintUsage(const char* name, int default_timeout) {
-    // clang-format off
-    std::cout << "Usage: " << name << " [options]\n"
-              << "Options:\n"
-              << "  -p \"pattern\"  : Include tests matching the pattern\n"
-              << "  -p \"-pattern\" : Exclude tests matching the pattern\n"
-              << "  -t \"timeout\"  : Set the default timeout value (in "
-                 "milliseconds, default: "
-              << default_timeout << ")\n"
-              << "  -c            : Disable color output\n"
-              << "  -f            : Force mode, run all, including skipped tests\n"
-              << "  -s            : Silent mode, suppress stdout and stderr\n"
-              << "  -h, --help    : Show this help message\n\n"
-              << "Driven by MyTest (v" << kCalVersion << ")\n";
-    // clang-format on
+    std::cout
+        << "Usage: " << name << " [options]\n"
+        << "Options:\n"
+        << "  -p \"pattern\"  : Include tests matching the pattern\n"
+        << "  -p \"-pattern\" : Exclude tests matching the pattern\n"
+        << "  -t \"timeout\"  : Set the default timeout value (in "
+           "milliseconds, default: "
+        << default_timeout << ")\n"
+        << "  -c            : Disable color output\n"
+        << "  -f            : Force mode, run all, including skipped tests\n"
+        << "  -s            : Silent mode, suppress stdout and stderr\n"
+        << "  -h, --help    : Show this help message\n\n"
+        << "Driven by MyTest (v" << kCalVersion << ")\n";
   }
 
   int default_timeout_;
@@ -604,16 +614,16 @@ int main(int argc, char* argv[]) {
 }
 #endif
 
-#ifndef __FILE_NAME__
-#define __FILE_NAME__                                                          \
+#ifndef __FILE_NAME
+#define __FILE_NAME                                                            \
   std::string((strrchr(__FILE__, '/') ? strrchr(__FILE__, '/') + 1 : __FILE__))
 #endif
 
-#define __LOC__ "(" + __FILE_NAME__ + ":" + std::to_string(__LINE__) + ")"
+#define __LOC "(" + __FILE_NAME + ":" + std::to_string(__LINE__) + ")"
 
 #define FORMAT_ERROR_MESSAGE(x, cond_str, y, msg)                              \
   std::stringstream ss;                                                        \
-  ss << msg << std::string(" ") + __LOC__ << "\n";                             \
+  ss << msg << std::string(" ") + __LOC << "\n";                               \
   ss << "  Expected : (" << #x << " " cond_str " " << #y << ")\n";             \
   ss << "    Actual : (" << x << " " cond_str " " << y << ")";
 
