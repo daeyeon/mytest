@@ -149,6 +149,7 @@ class MyTest {
     static int stderr_backup = -1;
 
     if (silent) {
+      // Flush and backup stdout and stderr
       fflush(stdout);
       fflush(stderr);
       stdout_backup = dup(fileno(stdout));
@@ -375,8 +376,7 @@ class MyTest {
           test_before_each_[group_name]();
         }
         expect_passed_ = true;
-        auto future = test();
-        future.get();
+        test();
         if (test_after_each_.count(group_name)) {
           test_after_each_[group_name]();
         }
@@ -578,11 +578,18 @@ class MyTest {
     auto promise = std::make_shared<std::promise<void>>();                     \
     auto future = promise->get_future();                                       \
     auto done = [promise]() { promise->set_value(); };                         \
-    std::thread([done]() { group##name##_impl(done); }).detach();              \
+    std::thread([done, promise]() {                                            \
+      try {                                                                    \
+        group##name##_impl(done);                                              \
+      } catch (...) {                                                          \
+        promise->set_exception(std::current_exception());                      \
+      }                                                                        \
+    }).detach();                                                               \
     if (future.wait_for(std::chrono::milliseconds(timeout_ms)) ==              \
         std::future_status::timeout) {                                         \
       throw MyTest::TestTimeoutException(#group ":" #name);                    \
     }                                                                          \
+    future.get();                                                              \
     return future;                                                             \
   }                                                                            \
   void group##name##_impl(std::function<void()> done)
