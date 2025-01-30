@@ -290,16 +290,13 @@ class MyTest {
         if (test_before_each_.count(group_name)) {
           test_before_each_[group_name]();
         }
+
+        failure = false;
+        skipped = false;
         condition_passed_ = true;
         expect_failure_ = false;
 
-        // clang-format off
-        std::visit([](auto&& test) {
-          using T = std::decay_t<decltype(test)>;
-          if constexpr (std::is_same_v<T, std::function<void()>>) test();
-          else if constexpr (std::is_same_v<T, std::function<std::future<void>()>>) test();
-        }, test);
-        // clang-format on
+        std::visit([](auto&& test) { test(); }, test);
 
         if (test_after_each_.count(group_name)) {
           after_each = true;
