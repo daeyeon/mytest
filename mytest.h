@@ -264,9 +264,14 @@ class MyTest {
       bool skipped = false;
 
       auto group_name = name.substr(0, name.find(':'));
-      if (!group_tested[group_name] && test_before_.count(group_name)) {
-        test_before_[group_name]();
-        group_tested[group_name] = true;
+      {
+        auto _ = OnScopeLeave::create(
+            [&silent, this]() { SilenceOutput(silent && false); });
+        SilenceOutput(silent && true);
+        if (!group_tested[group_name] && test_before_.count(group_name)) {
+          test_before_[group_name]();
+          group_tested[group_name] = true;
+        }
       }
 
       printf(
@@ -279,13 +284,9 @@ class MyTest {
               if (!after_each && test_after_each_.count(group_name)) {
                 test_after_each_[group_name]();
               }
-              if (silent) {
-                SilenceOutput(false);
-              }
+              SilenceOutput(silent && false);
             });
-        if (silent) {
-          SilenceOutput(true);
-        }
+        SilenceOutput(silent && true);
 
         if (test_before_each_.count(group_name)) {
           test_before_each_[group_name]();
@@ -353,9 +354,14 @@ class MyTest {
       }
     }
 
-    for (const auto& group : group_tested) {
-      if (test_after_.count(group.first)) {
-        test_after_[group.first]();
+    {
+      auto _ = OnScopeLeave::create(
+          [&silent, this]() { SilenceOutput(silent && false); });
+      SilenceOutput(silent && true);
+      for (const auto& group : group_tested) {
+        if (test_after_.count(group.first)) {
+          test_after_[group.first]();
+        }
       }
     }
 
