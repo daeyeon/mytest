@@ -26,55 +26,55 @@
 
   int global;
 
-  TEST(Subject, SyncTest) {
+  TEST(TestSuite, SyncTest) {
     ASSERT_EQ(1, global);
   }
 
-  TEST(Subject, SyncTestTimeout, 1000) {
+  TEST(TestSuite, SyncTestTimeout, 1000) {
     TEST_EXPECT_FAILURE();
     std::this_thread::sleep_for(std::chrono::seconds(2));
     ASSERT_EQ(1, global);
   }
 
-  TEST0(Subject, SyncTestOnCurrentThread) {
+  TEST0(TestSuite, SyncTestOnCurrentThread) {
     // Runs on current thread; others on separate threads until timeout.
     ASSERT_EQ(1, global);
   }
 
-  TEST_ASYNC(Subject, ASyncTest) {
+  TEST_ASYNC(TestSuite, ASyncTest) {
     std::this_thread::sleep_for(std::chrono::seconds(1));
     ASSERT_EQ(1, global);
     done();
   }
 
-  TEST_ASYNC(Subject, ASyncTestTimeout, 1000) {
+  TEST_ASYNC(TestSuite, ASyncTestTimeout, 1000) {
     TEST_EXPECT_FAILURE();
     std::this_thread::sleep_for(std::chrono::seconds(2));
     ASSERT_EQ(1, global);
     done();
   }
 
-  TEST_ASYNC(Subject, ASyncTestSkip) {
+  TEST_ASYNC(TestSuite, ASyncTestSkip) {
     TEST_SKIP("Skipping this test");
     std::this_thread::sleep_for(std::chrono::seconds(1));
     ASSERT_EQ(1, global);
     done();
   }
 
-  TEST_BEFORE_EACH(Subject) {
-    std::cout << "Before each Subject test" << std::endl;
+  TEST_BEFORE_EACH(TestSuite) {
+    std::cout << "Before each TestSuite test" << std::endl;
   }
 
-  TEST_AFTER_EACH(Subject) {
-    std::cout << "After each Subject test" << std::endl;
+  TEST_AFTER_EACH(TestSuite) {
+    std::cout << "After each TestSuite test" << std::endl;
   }
 
-  TEST_BEFORE(Subject) {
-    std::cout << "Runs once before all Subject tests" << std::endl;
+  TEST_BEFORE(TestSuite) {
+    std::cout << "Runs once before all TestSuite tests" << std::endl;
   }
 
-  TEST_AFTER(Subject) {
-    std::cout << "Runs once after all Subject tests" << std::endl;
+  TEST_AFTER(TestSuite) {
+    std::cout << "Runs once after all TestSuite tests" << std::endl;
   }
 
   int main(int argc, char* argv[]) {
@@ -83,15 +83,15 @@
   }
 
   Command Line Usage Examples:
-   ./your_test "Subject:"        // Run all tests in 'Subject' group
+   ./your_test "TestSuite:"      // Run all tests in 'TestSuite'
    ./your_test "TestTimeout"     // Run all tests with 'TestTimeout' in the name
-   ./your_test "-Subject:"       // Exclude all tests in Subject group
+   ./your_test "-TestSuite:"     // Exclude all tests in 'TestSuite'
    ./your_test "-Timeout"        // Exclude all tests with 'Timeout' in the name
 */
 
 class MyTest {
  public:
-  static MyTest& GetInstance() {
+  static MyTest& Instance() {
     static MyTest instance;
     return instance;
   }
@@ -116,36 +116,30 @@ class MyTest {
     std::string msg_;
   };
 
-  void RegisterTest(const std::string& test_name, std::function<void()> test) {
-    tests_.emplace_back(test_name, test);
+  // clang-format off
+  void RegisterTest(const std::string& group_name, std::function<void()> test) {
+    tests_.emplace_back(group_name, test);
   }
 
-  void RegisterAsyncTest(const std::string& test_name,
-                         std::function<std::future<void>()> test) {
-    tests_.emplace_back(test_name, test);
+  void RegisterTestBeforeEach(const std::string& group_name, std::function<void()> test) {
+    test_before_each_[group_name] = test;
   }
 
-  void RegisterTestBeforeEach(const std::string& group_name,
-                              std::function<void()> func) {
-    test_before_each_[group_name] = func;
+  void RegisterTestAfterEach(const std::string& group_name, std::function<void()> test) {
+    test_after_each_[group_name] = test;
   }
 
-  void RegisterTestAfterEach(const std::string& group_name,
-                             std::function<void()> func) {
-    test_after_each_[group_name] = func;
+  void RegisterTestBefore(const std::string& group_name, std::function<void()> test) {
+    test_before_[group_name] = test;
   }
 
-  void RegisterTestBefore(const std::string& group_name,
-                          std::function<void()> func) {
-    test_before_[group_name] = func;
+  void RegisterTestAfter(const std::string& group_name, std::function<void()> test) {
+    test_after_[group_name] = test;
   }
-
-  void RegisterTestAfter(const std::string& group_name,
-                         std::function<void()> func) {
-    test_after_[group_name] = func;
-  }
+  // clang-format on
 
   void MarkConditionPassed(bool value) { condition_passed_ = value; }
+
   void MarkExpectFailure(bool value) { expect_failure_ = value; }
 
   void SilenceOutput(bool silent) {
@@ -153,7 +147,6 @@ class MyTest {
     static int stderr_backup = -1;
 
     if (silent) {
-      // Flush and backup stdout and stderr
       fflush(stdout);
       fflush(stderr);
       stdout_backup = dup(fileno(stdout));
@@ -281,6 +274,7 @@ class MyTest {
         bool after_each = false;
         auto _ =
             OnScopeLeave::create([&silent, this, &group_name, &after_each]() {
+              // after_each == false means that an exception occurs on testing.
               if (!after_each && test_after_each_.count(group_name)) {
                 test_after_each_[group_name]();
               }
@@ -303,55 +297,39 @@ class MyTest {
           after_each = true;
           test_after_each_[group_name]();
         }
-        if (condition_passed_) {
-          ++num_success;
-        } else {
-          ++num_failure;
+        // check failure after doing after_each
+        if (!condition_passed_) {
           failure = true;
         }
       } catch (const TestSkipException& e) {
-        ++num_skipped;
         skipped = true;
         printf("\n%s\n", e.what());
       } catch (const TestTimeoutException& e) {
-        ++num_failure;
         failure = true;
         printf("\n%s\n", e.what());
       } catch (const std::runtime_error& e) {
-        ++num_failure;
         failure = true;
         printf("\n%s\n", e.what());
       } catch (const std::exception& e) {
         printf("\nException : %s\n", e.what());
-        ++num_failure;
         failure = true;
       } catch (...) {
         printf("\nException : Unknown\n");
-        ++num_failure;
         failure = true;
       }
 
-      if (expect_failure_ && failure) {
-        --num_failure;
+      if (failure && expect_failure_) {
         failure = false;
       }
 
       ++num_ran_tests;
+      (failure ? ++num_failure : (skipped ? ++num_skipped : ++num_success));
 
-      if (failure) {
-        printf(
-            "%s[  FAILED  ]%s %s\n", colors[RED], colors[RESET], name.c_str());
-      } else if (skipped) {
-        printf("%s[  SKIPPED ]%s %s\n",
-               colors[YELLOW],
-               colors[RESET],
-               name.c_str());
-      } else {
-        printf("%s[       OK ]%s %s\n",
-               colors[GREEN],
-               colors[RESET],
-               name.c_str());
-      }
+      // clang-format off
+      if (failure)      printf("%s[  FAILED  ]%s %s\n", colors[RED], colors[RESET], name.c_str());
+      else if (skipped) printf("%s[  SKIPPED ]%s %s\n", colors[YELLOW], colors[RESET], name.c_str());
+      else              printf("%s[       OK ]%s %s\n", colors[GREEN], colors[RESET],name.c_str());
+      // clang-format on
     }
 
     {
@@ -365,26 +343,12 @@ class MyTest {
       }
     }
 
-    printf("%s[==========]%s %d test case(s) ran.\n",
-           colors[GREEN],
-           colors[RESET],
-           num_ran_tests);
-    printf("%s[  PASSED  ]%s %d test(s).\n",
-           colors[GREEN],
-           colors[RESET],
-           num_ran_tests - num_failure - num_skipped);
-    if (0 != num_skipped) {
-      printf("%s[  SKIPPED ]%s %d test(s):\n",
-             colors[YELLOW],
-             colors[RESET],
-             num_skipped);
-    }
-    if (0 != num_failure) {
-      printf("%s[  FAILED  ]%s %d test(s)\n",
-             colors[RED],
-             colors[RESET],
-             num_failure);
-    }
+    // clang-format off
+                         printf("%s[==========]%s %d test case(s) ran.\n", colors[GREEN], colors[RESET], num_ran_tests);
+                         printf("%s[  PASSED  ]%s %d test(s).\n", colors[GREEN], colors[RESET], num_ran_tests - num_failure - num_skipped);
+    (num_skipped > 0) && printf("%s[  SKIPPED ]%s %d test(s):\n", colors[YELLOW], colors[RESET], num_skipped);
+    (num_failure > 0) && printf("%s[  FAILED  ]%s %d test(s)\n", colors[RED], colors[RESET], num_failure);
+    // clang-format on
     return num_failure > 0 ? 1 : 0;
   }
 
@@ -428,19 +392,19 @@ class MyTest {
   };
 
   void PrintUsage(const char* name, int default_timeout) {
+    // clang-format off
     std::cout
         << "Usage: " << name << " [options]\n"
         << "Options:\n"
         << "  -p \"pattern\"  : Include tests matching the pattern\n"
         << "  -p \"-pattern\" : Exclude tests matching the pattern\n"
-        << "  -t \"timeout\"  : Set the default timeout value (in "
-           "milliseconds, default: "
-        << default_timeout << ")\n"
+        << "  -t \"timeout\"  : Set the default timeout value (in milliseconds, default: " << default_timeout << ")\n"
         << "  -c            : Disable color output\n"
         << "  -f            : Force mode, run all, including skipped tests\n"
         << "  -s            : Silent mode, suppress stdout and stderr\n"
         << "  -h, --help    : Show this help message\n\n"
         << "Driven by MyTest (v" << kCalVersion << ")\n";
+    // clang-format on
   }
 
   int default_timeout_;
@@ -461,25 +425,18 @@ class MyTest {
 };
 
 #define TEST0(group, name)                                                     \
-  void group##name();                                                          \
+  void group##name##_impl();                                                   \
   struct group##name##_Register {                                              \
     group##name##_Register() {                                                 \
-      MyTest::GetInstance().RegisterTest(#group ":" #name, group##name);       \
+      MyTest::Instance().RegisterTest(#group ":" #name, group##name##_impl);   \
     }                                                                          \
   } group##name##_register;                                                    \
-  void group##name()
+  void group##name##_impl()
 
 #define TEST(group, name, ...)                                                 \
   void group##name##_impl();                                                   \
   std::future<void> group##name(int timeout_ms =                               \
-                                    MyTest::GetInstance().default_timeout());  \
-  struct group##name##_Register {                                              \
-    group##name##_Register() {                                                 \
-      MyTest::GetInstance().RegisterTest(                                      \
-          #group ":" #name, []() { return group##name(__VA_ARGS__); });        \
-    }                                                                          \
-  } group##name##_register;                                                    \
-  std::future<void> group##name(int timeout_ms) {                              \
+                                    MyTest::Instance().default_timeout()) {    \
     auto promise = std::make_shared<std::promise<void>>();                     \
     auto future = promise->get_future();                                       \
     std::thread([promise]() {                                                  \
@@ -497,19 +454,18 @@ class MyTest {
     future.get();                                                              \
     return future;                                                             \
   }                                                                            \
+  struct group##name##_Register {                                              \
+    group##name##_Register() {                                                 \
+      MyTest::Instance().RegisterTest(                                         \
+          #group ":" #name, []() { return group##name(__VA_ARGS__); });        \
+    }                                                                          \
+  } group##name##_register;                                                    \
   void group##name##_impl()
 
 #define TEST_ASYNC(group, name, ...)                                           \
   void group##name##_impl(std::function<void()> done);                         \
   std::future<void> group##name(int timeout_ms =                               \
-                                    MyTest::GetInstance().default_timeout());  \
-  struct group##name##_Register {                                              \
-    group##name##_Register() {                                                 \
-      MyTest::GetInstance().RegisterAsyncTest(                                 \
-          #group ":" #name, []() { return group##name(__VA_ARGS__); });        \
-    }                                                                          \
-  } group##name##_register;                                                    \
-  std::future<void> group##name(int timeout_ms) {                              \
+                                    MyTest::Instance().default_timeout()) {    \
     auto promise = std::make_shared<std::promise<void>>();                     \
     auto future = promise->get_future();                                       \
     auto done = [promise]() { promise->set_value(); };                         \
@@ -527,14 +483,19 @@ class MyTest {
     future.get();                                                              \
     return future;                                                             \
   }                                                                            \
+  struct group##name##_Register {                                              \
+    group##name##_Register() {                                                 \
+      MyTest::Instance().RegisterTest(                                         \
+          #group ":" #name, []() { return group##name(__VA_ARGS__); });        \
+    }                                                                          \
+  } group##name##_register;                                                    \
   void group##name##_impl(std::function<void()> done)
 
 #define TEST_BEFORE_EACH(group)                                                \
   void group##_BeforeEach();                                                   \
   struct group##_BeforeEach_Register {                                         \
     group##_BeforeEach_Register() {                                            \
-      MyTest::GetInstance().RegisterTestBeforeEach(#group,                     \
-                                                   group##_BeforeEach);        \
+      MyTest::Instance().RegisterTestBeforeEach(#group, group##_BeforeEach);   \
     }                                                                          \
   } group##_BeforeEach_register;                                               \
   void group##_BeforeEach()
@@ -543,7 +504,7 @@ class MyTest {
   void group##_AfterEach();                                                    \
   struct group##_AfterEach_Register {                                          \
     group##_AfterEach_Register() {                                             \
-      MyTest::GetInstance().RegisterTestAfterEach(#group, group##_AfterEach);  \
+      MyTest::Instance().RegisterTestAfterEach(#group, group##_AfterEach);     \
     }                                                                          \
   } group##_AfterEach_register;                                                \
   void group##_AfterEach()
@@ -552,7 +513,7 @@ class MyTest {
   void group##_Before();                                                       \
   struct group##_Before_Register {                                             \
     group##_Before_Register() {                                                \
-      MyTest::GetInstance().RegisterTestBefore(#group, group##_Before);        \
+      MyTest::Instance().RegisterTestBefore(#group, group##_Before);           \
     }                                                                          \
   } group##_Before_register;                                                   \
   void group##_Before()
@@ -561,24 +522,24 @@ class MyTest {
   void group##_After();                                                        \
   struct group##_After_Register {                                              \
     group##_After_Register() {                                                 \
-      MyTest::GetInstance().RegisterTestAfter(#group, group##_After);          \
+      MyTest::Instance().RegisterTestAfter(#group, group##_After);             \
     }                                                                          \
   } group##_After_register;                                                    \
   void group##_After()
 
 #define TEST_SKIP(msg)                                                         \
   do {                                                                         \
-    if (!MyTest::GetInstance().force()) {                                      \
+    if (!MyTest::Instance().force()) {                                         \
       throw MyTest::TestSkipException(msg);                                    \
     }                                                                          \
   } while (0)
 
 #define TEST_EXPECT_FAILURE(msg)                                               \
   do {                                                                         \
-    MyTest::GetInstance().MarkExpectFailure(true);                             \
+    MyTest::Instance().MarkExpectFailure(true);                                \
   } while (0)
 
-#define RUN_ALL_TESTS(argc, argv) MyTest::GetInstance().RunAllTests(argc, argv)
+#define RUN_ALL_TESTS(argc, argv) MyTest::Instance().RunAllTests(argc, argv)
 
 #ifdef MYTEST_CONFIG_USE_MAIN
 int main(int argc, char* argv[]) {
@@ -606,7 +567,7 @@ int main(int argc, char* argv[]) {
       throw std::runtime_error(ss.str());                                      \
     } else {                                                                   \
       std::cout << "\n" << ss.str() << "\n";                                   \
-      MyTest::GetInstance().MarkConditionPassed(false);                        \
+      MyTest::Instance().MarkConditionPassed(false);                           \
     }                                                                          \
   }
 
