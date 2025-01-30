@@ -30,6 +30,7 @@
   }
 
   TEST(Subject, SyncTestTimeout, 1000) {
+    TEST_EXPECT_FAILURE();
     std::this_thread::sleep_for(std::chrono::seconds(2));
     ASSERT_EQ(1, global);
   }
@@ -46,6 +47,7 @@
   }
 
   TEST_ASYNC(Subject, ASyncTestTimeout, 1000) {
+    TEST_EXPECT_FAILURE();
     std::this_thread::sleep_for(std::chrono::seconds(2));
     ASSERT_EQ(1, global);
     done();
@@ -142,7 +144,8 @@ class MyTest {
     test_after_[group_name] = func;
   }
 
-  void MarkExpectPassed(bool value) { expect_passed_ = value; }
+  void MarkConditionPassed(bool value) { condition_passed_ = value; }
+  void MarkExpectFailure(bool value) { expect_failure_ = value; }
 
   void SilenceOutput(bool silent) {
     static int stdout_backup = -1;
@@ -286,13 +289,14 @@ class MyTest {
         if (test_before_each_.count(group_name)) {
           test_before_each_[group_name]();
         }
-        expect_passed_ = true;
+        condition_passed_ = true;
+        expect_failure_ = false;
         test();
         if (test_after_each_.count(group_name)) {
           after_each = true;
           test_after_each_[group_name]();
         }
-        if (expect_passed_) {
+        if (condition_passed_) {
           ++num_success;
         } else {
           ++num_failure;
@@ -318,6 +322,11 @@ class MyTest {
         printf("\nException : Unknown\n");
         ++num_failure;
         failure = true;
+      }
+
+      if (expect_failure_ && failure) {
+        --num_failure;
+        failure = false;
       }
 
       ++num_ran_tests;
@@ -375,12 +384,13 @@ class MyTest {
         if (test_before_each_.count(group_name)) {
           test_before_each_[group_name]();
         }
-        expect_passed_ = true;
+        condition_passed_ = true;
+        expect_failure_ = false;
         test();
         if (test_after_each_.count(group_name)) {
           test_after_each_[group_name]();
         }
-        if (expect_passed_) {
+        if (condition_passed_) {
           ++num_success;
         } else {
           ++num_failure;
@@ -406,6 +416,11 @@ class MyTest {
         printf("\nException : Unknown\n");
         ++num_failure;
         failure = true;
+      }
+
+      if (expect_failure_ && failure) {
+        --num_failure;
+        failure = false;
       }
 
       ++num_ran_tests;
@@ -512,7 +527,8 @@ class MyTest {
 
   int default_timeout_;
   bool force_ = false;
-  bool expect_passed_ = true;
+  bool condition_passed_ = true;
+  bool expect_failure_ = false;
   std::vector<std::pair<std::string, std::function<void()>>> sync_tests_;
   std::vector<std::pair<std::string, std::function<std::future<void>()>>>
       async_tests_;
@@ -638,6 +654,11 @@ class MyTest {
     }                                                                          \
   } while (0)
 
+#define TEST_EXPECT_FAILURE(msg)                                               \
+  do {                                                                         \
+    MyTest::GetInstance().MarkExpectFailure(true);                             \
+  } while (0)
+
 #define RUN_ALL_TESTS(argc, argv) MyTest::GetInstance().RunAllTests(argc, argv)
 
 #ifdef MYTEST_CONFIG_USE_MAIN
@@ -666,7 +687,7 @@ int main(int argc, char* argv[]) {
       throw std::runtime_error(ss.str());                                      \
     } else {                                                                   \
       std::cout << "\n" << ss.str() << "\n";                                   \
-      MyTest::GetInstance().MarkExpectPassed(false);                           \
+      MyTest::GetInstance().MarkConditionPassed(false);                        \
     }                                                                          \
   }
 

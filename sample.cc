@@ -7,6 +7,7 @@ TEST(Subject, SyncTest) {
 }
 
 TEST(Subject, SyncTestTimeout, 1000) {
+  TEST_EXPECT_FAILURE();
   std::this_thread::sleep_for(std::chrono::seconds(2));
   ASSERT_EQ(1, global);
 }
@@ -28,6 +29,7 @@ TEST_ASYNC(Subject, ASyncTest) {
 }
 
 TEST_ASYNC(Subject, ASyncTestTimeout, 1000) {
+  TEST_EXPECT_FAILURE();
   std::this_thread::sleep_for(std::chrono::seconds(2));
   ASSERT_EQ(1, global);
   done();
