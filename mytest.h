@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include <unistd.h>  // dup, dup2, fileno, close
 #include <cstring>
 #include <functional>
 #include <future>
@@ -143,6 +144,35 @@ class MyTest {
 
   void MarkExpectPassed(bool value) { expect_passed_ = value; }
 
+  void SilenceOutput(bool silent) {
+    static int stdout_backup = -1;
+    static int stderr_backup = -1;
+
+    if (silent) {
+      fflush(stdout);
+      fflush(stderr);
+      stdout_backup = dup(fileno(stdout));
+      stderr_backup = dup(fileno(stderr));
+
+      freopen("/dev/null", "w", stdout);
+      freopen("/dev/null", "w", stderr);
+    } else {
+      if (stdout_backup != -1) {
+        fflush(stdout);
+        dup2(stdout_backup, fileno(stdout));
+        close(stdout_backup);
+        stdout_backup = -1;
+      }
+      if (stderr_backup != -1) {
+        fflush(stderr);
+        dup2(stderr_backup, fileno(stderr));
+        close(stderr_backup);
+        stderr_backup = -1;
+      }
+      std::cout.flush();
+    }
+  }
+
   int RunAllTests(int argc, char* argv[]) {
     int default_timeout = default_timeout_;
 
@@ -245,14 +275,13 @@ class MyTest {
                 test_after_each_[group_name]();
               }
               if (silent) {
-                freopen("/dev/tty", "w", stdout);
-                freopen("/dev/tty", "w", stderr);
+                SilenceOutput(false);
               }
             });
         if (silent) {
-          freopen("/dev/null", "w", stdout);
-          freopen("/dev/null", "w", stderr);
+          SilenceOutput(true);
         }
+
         if (test_before_each_.count(group_name)) {
           test_before_each_[group_name]();
         }
@@ -335,13 +364,11 @@ class MyTest {
                 test_after_each_[group_name]();
               }
               if (silent) {
-                freopen("/dev/tty", "w", stdout);
-                freopen("/dev/tty", "w", stderr);
+                SilenceOutput(false);
               }
             });
         if (silent) {
-          freopen("/dev/null", "w", stdout);
-          freopen("/dev/null", "w", stderr);
+          SilenceOutput(true);
         }
 
         if (test_before_each_.count(group_name)) {
