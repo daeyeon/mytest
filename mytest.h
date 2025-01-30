@@ -18,6 +18,7 @@
 #include <string>
 #include <thread>
 #include <unordered_map>
+#include <variant>
 #include <vector>
 
 /*
@@ -116,12 +117,12 @@ class MyTest {
   };
 
   void RegisterTest(const std::string& test_name, std::function<void()> test) {
-    sync_tests_.emplace_back(test_name, test);
+    tests_.emplace_back(test_name, test);
   }
 
   void RegisterAsyncTest(const std::string& test_name,
                          std::function<std::future<void>()> test) {
-    async_tests_.emplace_back(test_name, test);
+    tests_.emplace_back(test_name, test);
   }
 
   void RegisterTestBeforeEach(const std::string& group_name,
@@ -248,14 +249,14 @@ class MyTest {
     printf("%s[==========]%s Running %zu test case(s).\n",
            colors[GREEN],
            colors[RESET],
-           sync_tests_.size() + async_tests_.size());
+           tests_.size());
 
     std::unordered_map<std::string, bool> group_tested;
 
-    // Run sync tests
-    for (const auto& test_pair : sync_tests_) {
+    // Run all tests
+    for (const auto& test_pair : tests_) {
       const std::string& name = test_pair.first;
-      const std::function<void()>& test = test_pair.second;
+      const TestFunction& test = test_pair.second;
       if (!should_run(name)) {
         continue;
       }
@@ -291,103 +292,17 @@ class MyTest {
         }
         condition_passed_ = true;
         expect_failure_ = false;
-        test();
+
+        // clang-format off
+        std::visit([](auto&& test) {
+          using T = std::decay_t<decltype(test)>;
+          if constexpr (std::is_same_v<T, std::function<void()>>) test();
+          else if constexpr (std::is_same_v<T, std::function<std::future<void>()>>) test();
+        }, test);
+        // clang-format on
+
         if (test_after_each_.count(group_name)) {
           after_each = true;
-          test_after_each_[group_name]();
-        }
-        if (condition_passed_) {
-          ++num_success;
-        } else {
-          ++num_failure;
-          failure = true;
-        }
-      } catch (const TestSkipException& e) {
-        ++num_skipped;
-        skipped = true;
-        printf("\n%s\n", e.what());
-      } catch (const TestTimeoutException& e) {
-        ++num_failure;
-        failure = true;
-        printf("\n%s\n", e.what());
-      } catch (const std::runtime_error& e) {
-        ++num_failure;
-        failure = true;
-        printf("\n%s\n", e.what());
-      } catch (const std::exception& e) {
-        printf("\nException : %s\n", e.what());
-        ++num_failure;
-        failure = true;
-      } catch (...) {
-        printf("\nException : Unknown\n");
-        ++num_failure;
-        failure = true;
-      }
-
-      if (expect_failure_ && failure) {
-        --num_failure;
-        failure = false;
-      }
-
-      ++num_ran_tests;
-
-      if (failure) {
-        printf(
-            "%s[  FAILED  ]%s %s\n", colors[RED], colors[RESET], name.c_str());
-      } else if (skipped) {
-        printf("%s[  SKIPPED ]%s %s\n",
-               colors[YELLOW],
-               colors[RESET],
-               name.c_str());
-      } else {
-        printf("%s[       OK ]%s %s\n",
-               colors[GREEN],
-               colors[RESET],
-               name.c_str());
-      }
-    }
-
-    // Run async tests
-    for (const auto& test_pair : async_tests_) {
-      const std::string& name = test_pair.first;
-      const std::function<std::future<void>()>& test = test_pair.second;
-      if (!should_run(name)) {
-        continue;
-      }
-      bool failure = false;
-      bool skipped = false;
-
-      auto group_name = name.substr(0, name.find(':'));
-      if (!group_tested[group_name] && test_before_.count(group_name)) {
-        test_before_[group_name]();
-        group_tested[group_name] = true;
-      }
-
-      printf(
-          "%s[ RUN      ]%s %s\n", colors[GREEN], colors[RESET], name.c_str());
-
-      try {
-        bool after_each = false;
-        auto _ =
-            OnScopeLeave::create([&silent, this, &group_name, &after_each]() {
-              if (!after_each && test_after_each_.count(group_name)) {
-                test_after_each_[group_name]();
-              }
-              if (silent) {
-                SilenceOutput(false);
-              }
-            });
-        if (silent) {
-          SilenceOutput(true);
-        }
-
-        if (test_before_each_.count(group_name)) {
-          test_before_each_[group_name]();
-        }
-        condition_passed_ = true;
-        expect_failure_ = false;
-        test();
-        if (test_after_each_.count(group_name)) {
           test_after_each_[group_name]();
         }
         if (condition_passed_) {
@@ -529,9 +444,10 @@ class MyTest {
   bool force_ = false;
   bool condition_passed_ = true;
   bool expect_failure_ = false;
-  std::vector<std::pair<std::string, std::function<void()>>> sync_tests_;
-  std::vector<std::pair<std::string, std::function<std::future<void>()>>>
-      async_tests_;
+
+  using TestFunction =
+      std::variant<std::function<void()>, std::function<std::future<void>()>>;
+  std::vector<std::pair<std::string, TestFunction>> tests_;
   std::unordered_map<std::string, std::function<void()>> test_before_each_;
   std::unordered_map<std::string, std::function<void()>> test_after_each_;
   std::unordered_map<std::string, std::function<void()>> test_before_;
