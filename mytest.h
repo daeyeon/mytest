@@ -79,12 +79,10 @@
   }
 
   Command Line Usage Examples:
-   ./your_test "Subject::*"  // Run all tests in Subject group
-   ./your_test "Subject::SyncTestTimeout"  // Run specific test
-   ./your_test "*TestTimeout*"  // Run all tests with Function in the name
-   ./your_test "-Subject::*"  // Exclude all tests in Subject group
-   ./your_test "-Subject::SyncTestTimeout"  // Exclude specific test
-   ./your_test "-*TestTimeout*"  // Exclude all tests with Function in the name
+   ./your_test "Subject:"        // Run all tests in 'Subject' group
+   ./your_test "TestTimeout"     // Run all tests with 'TestTimeout' in the name
+   ./your_test "-Subject:"       // Exclude all tests in Subject group
+   ./your_test "-Timeout"        // Exclude all tests with 'Timeout' in the name
 */
 
 class MyTest {
