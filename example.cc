@@ -1,3 +1,4 @@
+#define MYTEST_CONFIG_USE_MAIN
 #include <mytest.h>
 
 int global;
@@ -18,7 +19,7 @@ TEST0(TestSuite, SyncTestOnCurrentThread) {
 }
 
 TEST(TestSuite, SyncTestSkip) {
-  TEST_SKIP("Skipping this test");
+  TEST_SKIP();
   ASSERT_EQ(1, global);
 }
 
@@ -36,7 +37,7 @@ TEST_ASYNC(TestSuite, ASyncTestTimeout, 1000) {
 }
 
 TEST_ASYNC(TestSuite, ASyncTestSkip) {
-  TEST_SKIP("Skipping this test");
+  TEST_SKIP();
   std::this_thread::sleep_for(std::chrono::seconds(1));
   ASSERT_EQ(1, global);
   done();
@@ -52,13 +53,21 @@ TEST_AFTER_EACH(TestSuite) {
 
 TEST_BEFORE(TestSuite) {
   std::cout << "Runs once before all TestSuite tests" << std::endl;
+  global = 1;
 }
 
 TEST_AFTER(TestSuite) {
   std::cout << "Runs once after all TestSuite tests" << std::endl;
 }
 
-int main(int argc, char* argv[]) {
-  global = 1;
-  return RUN_ALL_TESTS(argc, argv);
+TEST(TestSuite, ExcludeTest) {
+  ASSERT_EQ(1, 0);
 }
+
+TEST(TestSuite2, ExcludeTest) {
+  ASSERT_EQ(1, 0);
+}
+
+TEST_EXCLUDE(TestSuite, ExcludeTest)
+
+TEST_EXCLUDE(TestSuite2)

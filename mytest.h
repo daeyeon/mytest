@@ -1,5 +1,5 @@
 /*
- * MyTest - A header-only util for unit testing.
+ * MyTest - A header-only util for quick unit testing.
  * Copyright 2024-present Daeyeon Jeong (daeyeon.dev@gmail.com)
  *
  * Licensed under the Apache License, Version 2.0.
@@ -13,6 +13,7 @@
 #include <functional>
 #include <future>
 #include <iostream>
+#include <map>
 #include <regex>
 #include <sstream>
 #include <string>
@@ -55,7 +56,7 @@
   }
 
   TEST_ASYNC(TestSuite, ASyncTestSkip) {
-    TEST_SKIP("Skipping this test");
+    TEST_SKIP();
     std::this_thread::sleep_for(std::chrono::seconds(1));
     ASSERT_EQ(1, global);
     done();
@@ -71,6 +72,7 @@
 
   TEST_BEFORE(TestSuite) {
     std::cout << "Runs once before all TestSuite tests" << std::endl;
+    global = 1;
   }
 
   TEST_AFTER(TestSuite) {
@@ -78,15 +80,20 @@
   }
 
   int main(int argc, char* argv[]) {
-    global = 1;
     return RUN_ALL_TESTS(argc, argv);
   }
 
   Command Line Usage Examples:
    ./your_test "TestSuite:"      // Run all tests in 'TestSuite'
-   ./your_test "TestTimeout"     // Run all tests with 'TestTimeout' in the name
+   ./your_test "Timeout"         // Run all tests with 'Timeout' in the name
    ./your_test "-TestSuite:"     // Exclude all tests in 'TestSuite'
    ./your_test "-Timeout"        // Exclude all tests with 'Timeout' in the name
+
+  Macros:
+   TEST_SKIP              : Skip a test during execution.
+   TEST_EXPECT_FAILURE    : Mark a test expected to fail for nagative tests.
+   TEST_EXCLUDE           : Exclude a test to be run.
+   MYTEST_CONFIG_USE_MAIN : Define to use the test framework's main function.
 */
 
 class MyTest {
@@ -99,7 +106,7 @@ class MyTest {
   class TestSkipException : public std::exception {
    public:
     explicit TestSkipException(const std::string msg = "")
-        : msg_("   Skipped" + (msg.empty() ? "" : " : '" + msg + "'")) {}
+        : msg_("   Skipped : " + (msg.empty() ? "Expected skipped." : msg)) {}
     const char* what() const noexcept override { return msg_.c_str(); }
 
    private:
@@ -142,6 +149,10 @@ class MyTest {
 
   void MarkExpectFailure(bool value) { expect_failure_ = value; }
 
+  void AddExcludePattern(const std::string& pattern) {
+    exclude_patterns_.emplace_back(pattern);
+  }
+
   void SilenceOutput(bool silent) {
     static int stdout_backup = -1;
     static int stderr_backup = -1;
@@ -169,6 +180,7 @@ class MyTest {
       }
       std::cout.flush();
     }
+    silent_ = silent;
   }
 
   int RunAllTests(int argc, char* argv[]) {
@@ -178,7 +190,7 @@ class MyTest {
     bool use_color = true;
     bool silent = false;
     std::vector<std::regex> include_patterns;
-    std::vector<std::regex> exclude_patterns;
+    std::vector<std::regex> exclude_patterns = exclude_patterns_;
 
     for (int i = 1; i < argc; ++i) {
       std::string arg = argv[i];
@@ -232,52 +244,57 @@ class MyTest {
     int num_failure = 0;
     int num_skipped = 0;
     int num_ran_tests = 0;
+    int num_filtered_tests = 0;
 
-    enum colors { RESET, GREEN, RED, YELLOW };
-    const char* colors[] = {use_color ? "\033[0m" : "",
-                            use_color ? "\033[32m" : "",
-                            use_color ? "\033[31m" : "",
-                            use_color ? "\033[33m" : ""};
+    colors_ = {use_color ? "\033[0m" : "",
+               use_color ? "\033[32m" : "",
+               use_color ? "\033[31m" : "",
+               use_color ? "\033[33m" : ""};
+    const char** colors = colors_.data();
 
-    printf("%s[==========]%s Running %zu test case(s).\n",
-           colors[GREEN],
-           colors[RESET],
-           tests_.size());
-
-    std::unordered_map<std::string, bool> group_tested;
-
-    // Run all tests
+    // Categorize and filter tests by name in alphabetical and numerical order.
+    std::map<std::string, std::vector<TestPair>> categorized_tests;
     for (const auto& test_pair : tests_) {
       const std::string& name = test_pair.first;
-      const TestFunction& test = test_pair.second;
+      auto group_name = name.substr(0, name.find(':'));
       if (!should_run(name)) {
         continue;
       }
+      num_filtered_tests++;
+      categorized_tests[group_name].push_back(test_pair);
+    }
+
+    // clang-format off
+                         printf("%s[==========]%s Running %d test case(s).\n", colors[GREEN], colors[RESET], num_filtered_tests);
+    auto PrintStart = [&colors](const std::string& name) {
+                         printf("%s[ RUN      ]%s %s\n", colors[GREEN], colors[RESET], name.c_str());
+    };
+    auto PrintEnd = [&colors](const bool failure, const bool skipped, const std::string& name) {
+      if (failure)       printf("%s[  FAILED  ]%s %s\n", colors[RED], colors[RESET], name.c_str());
+      else if (skipped)  printf("%s[  SKIPPED ]%s %s\n", colors[YELLOW], colors[RESET], name.c_str());
+      else               printf("%s[       OK ]%s %s\n", colors[GREEN], colors[RESET], name.c_str());
+    };
+    auto PrintResult = [&]() {
+                         printf("%s[==========]%s %d test case(s) ran.\n", colors[GREEN], colors[RESET], num_ran_tests);
+                         printf("%s[  PASSED  ]%s %d test(s)\n", colors[GREEN], colors[RESET], num_ran_tests - num_failure - num_skipped);
+    (num_skipped > 0) && printf("%s[  SKIPPED ]%s %d test(s)\n", colors[YELLOW], colors[RESET], num_skipped);
+    (num_failure > 0) && printf("%s[  FAILED  ]%s %d test(s)\n", colors[RED], colors[RESET], num_failure);
+    };
+    // clang-format on
+
+    auto RunTest = [this, &colors](const std::string& name,
+                                   const TestFunction& test,
+                                   const bool& silent,
+                                   const std::string group_name =
+                                       "") -> std::tuple<bool, bool> {
       bool failure = false;
       bool skipped = false;
-
-      auto group_name = name.substr(0, name.find(':'));
-      {
-        auto _ = OnScopeLeave::create(
-            [&silent, this]() { SilenceOutput(silent && false); });
-        SilenceOutput(silent && true);
-        if (!group_tested[group_name] && test_before_.count(group_name)) {
-          test_before_[group_name]();
-          group_tested[group_name] = true;
-        }
-      }
-
-      printf(
-          "%s[ RUN      ]%s %s\n", colors[GREEN], colors[RESET], name.c_str());
+      condition_passed_ = true;
+      expect_failure_ = false;
 
       try {
-        failure = false;
-        skipped = false;
-        condition_passed_ = true;
-        expect_failure_ = false;
-
         auto _ = OnScopeLeave::create([&, this]() {
-          if (test_after_each_.count(group_name)) {
+          if (!group_name.empty() && test_after_each_.count(group_name)) {
             test_after_each_[group_name]();
           }
           if (!condition_passed_) {
@@ -285,10 +302,9 @@ class MyTest {
           }
           SilenceOutput(silent && false);
         });
-
         SilenceOutput(silent && true);
 
-        if (test_before_each_.count(group_name)) {
+        if (!group_name.empty() && test_before_each_.count(group_name)) {
           test_before_each_[group_name]();
         }
 
@@ -311,42 +327,70 @@ class MyTest {
         failure = true;
       }
 
-      if (failure && expect_failure_) {
-        failure = false;
-      }
-
-      ++num_ran_tests;
-      (failure ? ++num_failure : (skipped ? ++num_skipped : ++num_success));
-
-      // clang-format off
-      if (failure)      printf("%s[  FAILED  ]%s %s\n", colors[RED], colors[RESET], name.c_str());
-      else if (skipped) printf("%s[  SKIPPED ]%s %s\n", colors[YELLOW], colors[RESET], name.c_str());
-      else              printf("%s[       OK ]%s %s\n", colors[GREEN], colors[RESET],name.c_str());
-      // clang-format on
-    }
-
-    {
-      auto _ = OnScopeLeave::create(
-          [&silent, this]() { SilenceOutput(silent && false); });
-      SilenceOutput(silent && true);
-      for (const auto& group : group_tested) {
-        if (test_after_.count(group.first)) {
-          test_after_[group.first]();
+      if (expect_failure_) {
+        failure = !failure;
+        if (failure) {
+          printf("    Failed : Expected fail but passed.\n");
+        } else {
+          printf("    Passed : Expected fail and failed.\n");
         }
       }
+
+      return std::make_tuple(failure, skipped);
+    };
+
+    // Run all tests
+    for (const auto& category : categorized_tests) {
+      const std::string& group_name = category.first;
+      const std::vector<TestPair>& group_tests = category.second;
+      bool group_failure = false;
+      bool group_skipped = false;
+
+      PrintStart(group_name);
+
+      if (test_before_.count(group_name)) {
+        auto [failure, skipped] =
+            RunTest(group_name, test_before_[group_name], silent);
+        if (skipped) {
+          group_skipped = true;
+          continue;
+        }
+        group_failure = group_failure || failure;
+      }
+
+      for (const auto& group_test : group_tests) {
+        const std::string& name = group_test.first;
+        const TestFunction& test = group_test.second;
+
+        PrintStart(name);
+
+        auto [failure, skipped] = RunTest(name, test, silent, group_name);
+        (failure ? ++num_failure : (skipped ? ++num_skipped : ++num_success));
+        ++num_ran_tests;
+
+        PrintEnd(failure, skipped, name);
+      }
+
+      if (test_after_.count(group_name)) {
+        auto [failure, skipped] =
+            RunTest(group_name, test_after_[group_name], silent);
+        group_failure = group_failure || failure;
+      }
+
+      PrintEnd(group_failure || num_failure > 0, group_skipped, group_name);
     }
 
-    // clang-format off
-                         printf("%s[==========]%s %d test case(s) ran.\n", colors[GREEN], colors[RESET], num_ran_tests);
-                         printf("%s[  PASSED  ]%s %d test(s).\n", colors[GREEN], colors[RESET], num_ran_tests - num_failure - num_skipped);
-    (num_skipped > 0) && printf("%s[  SKIPPED ]%s %d test(s):\n", colors[YELLOW], colors[RESET], num_skipped);
-    (num_failure > 0) && printf("%s[  FAILED  ]%s %d test(s)\n", colors[RED], colors[RESET], num_failure);
-    // clang-format on
+    PrintResult();
     return num_failure > 0 ? 1 : 0;
   }
 
   int default_timeout() { return default_timeout_; }
   bool force() { return force_; }
+  bool silent() { return silent_; }
+  bool expect_failure() { return expect_failure_; }
+
+  enum colors { RESET, GREEN, RED, YELLOW, NUM_COLORS };
+  const char* colors(size_t idx) { return colors_[idx]; }
 
  private:
   static constexpr int kDefaultTimeoutMS = 60000;
@@ -402,12 +446,16 @@ class MyTest {
 
   int default_timeout_;
   bool force_ = false;
+  bool silent_ = false;
   bool condition_passed_ = true;
   bool expect_failure_ = false;
+  std::vector<const char*> colors_;
+  std::vector<std::regex> exclude_patterns_;
 
   using TestFunction =
       std::variant<std::function<void()>, std::function<std::future<void>()>>;
-  std::vector<std::pair<std::string, TestFunction>> tests_;
+  using TestPair = std::pair<std::string, TestFunction>;
+  std::vector<TestPair> tests_;
   std::unordered_map<std::string, std::function<void()>> test_before_each_;
   std::unordered_map<std::string, std::function<void()>> test_after_each_;
   std::unordered_map<std::string, std::function<void()>> test_before_;
@@ -532,6 +580,19 @@ class MyTest {
     MyTest::Instance().MarkExpectFailure(true);                                \
   } while (0)
 
+#define _VA(_1, _2, NAME, ...) NAME
+#define _TEST_EXCLUDE_ARG1(group) _TEST_EXCLUDE_ARG2(group, EMPTYSTR)
+#define _TEST_EXCLUDE_ARG2(group_or_pattern, name)                             \
+  struct group_or_pattern##_##name##_Add_Exclude_Pattern {                     \
+    group_or_pattern##_##name##_Add_Exclude_Pattern() {                        \
+      std::string pattern = #group_or_pattern;                                 \
+      if (std::string(#name) != "EMPTYSTR") pattern += ":" #name;              \
+      MyTest::Instance().AddExcludePattern(pattern);                           \
+    }                                                                          \
+  } group_or_pattern##_##name##_add_exclude_pattern;
+#define TEST_EXCLUDE(...)                                                      \
+  _VA(__VA_ARGS__, _TEST_EXCLUDE_ARG2, _TEST_EXCLUDE_ARG1)(__VA_ARGS__)
+
 #define RUN_ALL_TESTS(argc, argv) MyTest::Instance().RunAllTests(argc, argv)
 
 #ifdef MYTEST_CONFIG_USE_MAIN
@@ -540,32 +601,39 @@ int main(int argc, char* argv[]) {
 }
 #endif
 
-#ifndef __FILE_NAME
-#define __FILE_NAME                                                            \
+#ifndef FILE_NAME_
+#define FILE_NAME_                                                             \
   std::string((strrchr(__FILE__, '/') ? strrchr(__FILE__, '/') + 1 : __FILE__))
 #endif
 
-#define __LOC "(" + __FILE_NAME + ":" + std::to_string(__LINE__) + ")"
+#define LOC_ "(" + FILE_NAME_ + ":" + std::to_string(__LINE__) + ")"
 
-#define FORMAT_ERROR_MESSAGE(x, cond_str, y, msg)                              \
-  std::stringstream ss;                                                        \
-  ss << msg << std::string(" ") + __LOC << "\n";                               \
-  ss << "  Expected : (" << #x << " " cond_str " " << #y << ")\n";             \
-  ss << "    Actual : (" << x << " " cond_str " " << y << ")";
+#define FORMAT_ERROR_MESSAGE_(x, cond_str, y, msg)                             \
+  std::stringstream __ss;                                                      \
+  __ss << msg << std::string(" ") + LOC_ << "\n";                              \
+  __ss << "  Expected : (" << #x << " " cond_str " " << #y << ")\n";           \
+  __ss << "    Actual : (" << x << " " cond_str " " << y << ")";
 
-#define CHECK_CONDITION(cond, x, y, cond_str, msg, should_throw)               \
-  if (cond) {                                                                  \
-    FORMAT_ERROR_MESSAGE(x, y, cond_str, msg);                                 \
-    if (should_throw) {                                                        \
-      throw std::runtime_error(ss.str());                                      \
-    } else {                                                                   \
-      std::cout << "\n" << ss.str() << "\n";                                   \
-      MyTest::Instance().MarkConditionPassed(false);                           \
+#define CHECK_CONDITION_(cond, x, y, cond_str, msg, should_throw)              \
+  do {                                                                         \
+    if (cond) {                                                                \
+      auto& __o = MyTest::Instance();                                          \
+      std::string __c = __o.colors(__o.expect_failure() ? 0 : 2);              \
+      FORMAT_ERROR_MESSAGE_(x, y, cond_str, msg);                              \
+      if (should_throw) {                                                      \
+        throw std::runtime_error(__c + __ss.str() + __o.colors(0));            \
+      } else {                                                                 \
+        bool __silent = __o.silent();                                          \
+        if (__silent) __o.SilenceOutput(false);                                \
+        std::cout << "\n" << __c << __ss.str() << __o.colors(0) << "\n";       \
+        if (__silent) __o.SilenceOutput(true);                                 \
+        __o.MarkConditionPassed(false);                                        \
+      }                                                                        \
     }                                                                          \
-  }
+  } while (0)
 
-#define EXPECT_(cond, x, c, y, m) CHECK_CONDITION(!(cond), x, #c, y, m, false)
-#define ASSERT_(cond, x, c, y, m) CHECK_CONDITION(!(cond), x, #c, y, m, true)
+#define EXPECT_(cond, x, c, y, m) CHECK_CONDITION_(!(cond), x, #c, y, m, false)
+#define ASSERT_(cond, x, c, y, m) CHECK_CONDITION_(!(cond), x, #c, y, m, true)
 #define EXPECT_EQ(x, y) EXPECT_((x) == (y), x, ==, y, "EXPECT_EQ failed")
 #define EXPECT_NE(x, y) EXPECT_((x) != (y), x, !=, y, "EXPECT_NE failed")
 #define ASSERT_EQ(x, y) ASSERT_((x) == (y), x, ==, y, "ASSERT_EQ failed")

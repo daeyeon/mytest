@@ -17,4 +17,6 @@ jobs:
       - name: Build
         run: make -C out -j$(nproc)
       - name: Test
+        run: out/test.x -s
+      - name: Example
         run: out/example.x -s
