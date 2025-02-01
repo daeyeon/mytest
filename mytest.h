@@ -1,5 +1,5 @@
 /*
- * MyTest - A header-only util for quick unit testing.
+ * MyTest - Lean, hassle-free testing utility, my way.
  * Copyright 2024-present Daeyeon Jeong (daeyeon.dev@gmail.com)
  *
  * Licensed under the Apache License, Version 2.0.
