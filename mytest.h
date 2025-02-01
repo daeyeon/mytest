@@ -271,36 +271,29 @@ class MyTest {
           "%s[ RUN      ]%s %s\n", colors[GREEN], colors[RESET], name.c_str());
 
       try {
-        bool after_each = false;
-        auto _ =
-            OnScopeLeave::create([&silent, this, &group_name, &after_each]() {
-              // after_each == false means that an exception occurs on testing.
-              if (!after_each && test_after_each_.count(group_name)) {
-                test_after_each_[group_name]();
-              }
-              SilenceOutput(silent && false);
-            });
+        failure = false;
+        skipped = false;
+        condition_passed_ = true;
+        expect_failure_ = false;
+
+        auto _ = OnScopeLeave::create([&, this]() {
+          if (test_after_each_.count(group_name)) {
+            test_after_each_[group_name]();
+          }
+          if (!condition_passed_) {
+            failure = true;
+          }
+          SilenceOutput(silent && false);
+        });
+
         SilenceOutput(silent && true);
 
         if (test_before_each_.count(group_name)) {
           test_before_each_[group_name]();
         }
 
-        failure = false;
-        skipped = false;
-        condition_passed_ = true;
-        expect_failure_ = false;
-
         std::visit([](auto&& test) { test(); }, test);
 
-        if (test_after_each_.count(group_name)) {
-          after_each = true;
-          test_after_each_[group_name]();
-        }
-        // check failure after doing after_each
-        if (!condition_passed_) {
-          failure = true;
-        }
       } catch (const TestSkipException& e) {
         skipped = true;
         printf("\n%s\n", e.what());
