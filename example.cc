@@ -1,5 +1,5 @@
 #define MYTEST_CONFIG_USE_MAIN
-#include <mytest.h>
+#include "mytest.h"
 
 int global;
 
@@ -13,8 +13,8 @@ TEST(TestSuite, SyncTestTimeout, 1000) {
   ASSERT_EQ(1, global);
 }
 
-TEST0(TestSuite, SyncTestOnCurrentThread) {
-  // Runs on current thread; others on separate threads until timeout.
+TEST0(TestSuite, SyncTestOnCurrentThread) {  // No timeout support in TEST0.
+  // Runs on the thread executing the test; other tests run on separate ones.
   ASSERT_EQ(1, global);
 }
 
@@ -24,9 +24,10 @@ TEST(TestSuite, SyncTestSkip) {
 }
 
 TEST_ASYNC(TestSuite, ASyncTest) {
-  std::this_thread::sleep_for(std::chrono::seconds(1));
-  ASSERT_EQ(1, global);
-  done();
+  std::async(std::launch::async, [&done]() {
+    ASSERT_EQ(1, global);
+    done();  // Call `done()` passed as a parameter when async completes.
+  }).get();
 }
 
 TEST_ASYNC(TestSuite, ASyncTestTimeout, 1000) {

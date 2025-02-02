@@ -10,6 +10,7 @@ TEST(TestSuite1, SyncTest) {
   EXPECT_EQ(1, f.before);
   EXPECT_EQ(0, f.after);
   f.count++;
+  ASSERT_NE(f.main_thread_id, std::this_thread::get_id());
 }
 
 TEST(TestSuite1, SyncTestFailure) {
@@ -28,8 +29,8 @@ TEST(TestSuite1, SyncTestTimeout, 1000) {
 }
 
 TEST0(TestSuite1, SyncTestOnCurrentThread) {
-  // Runs on current thread; others on separate threads until timeout.
   f.count++;
+  ASSERT_EQ(f.main_thread_id, std::this_thread::get_id());
 }
 
 TEST(TestSuite1, SyncTestSkip) {
@@ -39,7 +40,10 @@ TEST(TestSuite1, SyncTestSkip) {
 }
 
 TEST_ASYNC(TestSuite1, ASyncTest) {
-  std::async(std::launch::async, [&done]() {
+  auto this_thread_id = std::this_thread::get_id();
+  ASSERT_NE(f.main_thread_id, std::this_thread::get_id());
+  std::async(std::launch::async, [&done, &this_thread_id]() {
+    ASSERT_NE(this_thread_id, std::this_thread::get_id());
     std::this_thread::sleep_for(std::chrono::seconds(1));
     f.count++;
     done();
@@ -75,6 +79,7 @@ TEST_AFTER_EACH(TestSuite1) {
 TEST_BEFORE(TestSuite1) {
   std::cout << "\nRuns  : once before all TestSuite1 tests" << std::endl;
   f.before++;
+  f.main_thread_id = std::this_thread::get_id();
 }
 
 TEST_AFTER(TestSuite1) {

@@ -37,15 +37,16 @@
     ASSERT_EQ(1, global);
   }
 
-  TEST0(TestSuite, SyncTestOnCurrentThread) {
-    // Runs on current thread; others on separate threads until timeout.
+  TEST0(TestSuite, SyncTestOnCurrentThread) {   // No timeout support in TEST0.
+    // Runs on the thread executing the test; other tests run on separate ones.
     ASSERT_EQ(1, global);
   }
 
   TEST_ASYNC(TestSuite, ASyncTest) {
-    std::this_thread::sleep_for(std::chrono::seconds(1));
-    ASSERT_EQ(1, global);
-    done();
+    std::async(std::launch::async, [&done]() {
+      ASSERT_EQ(1, global);
+      done();      // Call `done()` passed as a parameter when async completes.
+    }).get();
   }
 
   TEST_ASYNC(TestSuite, ASyncTestTimeout, 1000) {
@@ -84,16 +85,15 @@
   }
 
   Command Line Usage Examples:
-   ./your_test "TestSuite:"      // Run all tests in 'TestSuite'
-   ./your_test "Timeout"         // Run all tests with 'Timeout' in the name
-   ./your_test "-TestSuite:"     // Exclude all tests in 'TestSuite'
-   ./your_test "-Timeout"        // Exclude all tests with 'Timeout' in the name
+   ./your_test -s                // Silent mode, suppress stdout and stderr
+   ./your_test -p "TestSuite"    // Run all tests in 'TestSuite' in the name
+   ./your_test -p "-TestSuite"   // Exclude all tests in 'TestSuite' in the name
 
   Macros:
    TEST_SKIP              : Skip a test during execution.
-   TEST_EXPECT_FAILURE    : Mark a test expected to fail for nagative tests.
-   TEST_EXCLUDE           : Exclude a test to be run.
-   MYTEST_CONFIG_USE_MAIN : Define to use the test framework's main function.
+   TEST_EXPECT_FAILURE    : Mark a test expected to fail (for negative tests).
+   TEST_EXCLUDE           : Exclude a test from execution.
+   MYTEST_CONFIG_USE_MAIN : Define to use this utility's main function.
 */
 
 class MyTest {
@@ -105,15 +105,14 @@ class MyTest {
 
   class TestSkipException : public std::runtime_error {
    public:
-    explicit TestSkipException(const std::string& msg = "")
-        : std::runtime_error(std::string("   Skipped : ") +
-                             (msg.empty() ? "Expected skipped." : msg)) {}
+    explicit TestSkipException(const std::string& msg = "Expected skipped.")
+        : std::runtime_error("   Skipped : " + msg) {}
   };
 
   class TestTimeoutException : public std::runtime_error {
    public:
     explicit TestTimeoutException(const std::string& msg)
-        : std::runtime_error(std::string(" Timed out : ") + msg) {}
+        : std::runtime_error(" Timed out : " + msg) {}
   };
 
   class TestAssertException : public std::runtime_error {
@@ -134,13 +133,11 @@ class MyTest {
   void SilenceOutput(bool silent) {
     static int stdout_backup = -1;
     static int stderr_backup = -1;
-
     if (silent) {
       fflush(stdout);
       fflush(stderr);
       stdout_backup = dup(fileno(stdout));
       stderr_backup = dup(fileno(stderr));
-
       freopen("/dev/null", "w", stdout);
       freopen("/dev/null", "w", stderr);
     } else {
@@ -174,73 +171,51 @@ class MyTest {
 
   bool force() { return force_; }
   bool silent() { return silent_; }
-  int default_timeout() { return default_timeout_; }
+  int timeout() { return timeout_; }
   bool expect_failure() { return expect_failure_; }
   enum colors { RESET, GREEN, RED, YELLOW, NUM_COLORS };
   const char* colors(size_t idx) { return colors_[idx]; }
 
   int RunAllTests(int argc, char* argv[]) {
-    int default_timeout = default_timeout_;
-
     // Parse CLI arguments
     bool use_color = true;
     bool silent = false;
     std::vector<std::regex> include_patterns;
-    std::vector<std::regex> exclude_patterns = exclude_patterns_;
 
     for (int i = 1; i < argc; ++i) {
       std::string arg = argv[i];
+      // clang-format off
       if (arg == "-p" && i + 1 < argc) {
         std::string pattern = argv[++i];
         try {
-          if (pattern[0] == '-') {
-            exclude_patterns.emplace_back(pattern.substr(1));
-          } else {
-            include_patterns.emplace_back(pattern);
-          }
+          (pattern[0] == '-') ? exclude_patterns_.emplace_back(pattern.substr(1)) : include_patterns.emplace_back(pattern);
         } catch (const std::exception& e) {
           std::cerr << e.what() << std::endl;
           return 1;
         }
-      } else if (arg == "-t" && i + 1 < argc) {
-        default_timeout = std::stoi(argv[++i]);
-      } else if (arg == "-c") {
-        use_color = false;
-      } else if (arg == "-s") {
-        silent = true;
-      } else if (arg == "-f") {
-        force_ = true;
-      } else if (arg == "-h" || arg == "--help") {
-        PrintUsage(argv[0], default_timeout);
-        return 0;
-      }
+      } else if (arg == "-t" && i + 1 < argc) { timeout_ = std::stoi(argv[++i]);
+      } else if (arg == "-c") { use_color = false;
+      } else if (arg == "-s") { silent = true;
+      } else if (arg == "-f") { force_ = true;
+      } else if (arg == "-h" || arg == "--help") { return PrintUsage(argv[0]); }
+      // clang-format on
     }
-    default_timeout_ = default_timeout;
 
-    auto should_run = [&](const std::string& name) {
-      for (const auto& pattern : exclude_patterns) {
-        if (std::regex_search(name, pattern)) {
-          return false;
-        }
+    auto should_run = [this, &include_patterns](const std::string& name) {
+      for (const auto& pattern : exclude_patterns_) {
+        if (std::regex_search(name, pattern)) return false;
       }
-      if (include_patterns.empty()) {
-        return true;
-      }
+      if (include_patterns.empty()) return true;
       for (const auto& pattern : include_patterns) {
-        if (std::regex_search(name, pattern)) {
-          return true;
-        }
+        if (std::regex_search(name, pattern)) return true;
       }
       return false;
     };
 
     // Run tests
 
-    int num_success = 0;
-    int num_failure = 0;
-    int num_skipped = 0;
-    int num_ran_tests = 0;
-    int num_filtered_tests = 0;
+    int num_success = 0, num_failure = 0, num_skipped = 0;
+    int num_ran_tests = 0, num_filtered_tests = 0;
 
     colors_ = {use_color ? "\033[0m" : "",
                use_color ? "\033[32m" : "",
@@ -252,9 +227,8 @@ class MyTest {
     std::map<std::string, std::vector<TestPair>> categorized_tests;
     for (const auto& test_pair : tests_) {
       const std::string& name = test_pair.first;
-      if (!should_run(name)) {
-        continue;
-      }
+      if (!should_run(name)) continue;
+
       num_filtered_tests++;
       auto group_name = name.substr(0, name.find(':'));
       categorized_tests[group_name].push_back(test_pair);
@@ -282,8 +256,7 @@ class MyTest {
                                             const TestFunction& test,
                                             const std::string group_name =
                                                 "") -> std::tuple<bool, bool> {
-      bool failure = false;
-      bool skipped = false;
+      bool failure = false, skipped = false;
       condition_passed_ = true;
       expect_failure_ = false;
 
@@ -380,7 +353,7 @@ class MyTest {
 
  private:
   static constexpr int kDefaultTimeoutMS = 60000;
-  static constexpr const char* kCalVersion = "25.01.0";
+  static constexpr const char* kCalVersion = "25.02.0";
 
 #if !defined(WARN_UNUSED_RESULT) && defined(__GNUC__)
 #define WARN_UNUSED_RESULT __attribute__((__warn_unused_result__))
@@ -390,47 +363,37 @@ class MyTest {
 
   class OnScopeLeave {
    public:
+    // clang-format off
     using Function = std::function<void()>;
-
     OnScopeLeave(const OnScopeLeave& other) = delete;
     OnScopeLeave& operator=(const OnScopeLeave& other) = delete;
-
-    explicit OnScopeLeave(Function&& function)
-        : function_(std::move(function)) {}
-    OnScopeLeave(OnScopeLeave&& other) : function_(std::move(other.function_)) {
-      other.function_ = nullptr;
-    }
-    ~OnScopeLeave() {
-      if (function_) {
-        function_();
-      }
-    }
-
-    static WARN_UNUSED_RESULT OnScopeLeave create(Function&& function) {
-      return OnScopeLeave(std::move(function));
-    }
-
+    explicit OnScopeLeave(Function&& function) : function_(std::move(function)) {}
+    OnScopeLeave(OnScopeLeave&& other) : function_(std::move(other.function_)) { other.function_ = nullptr; }
+    ~OnScopeLeave() { if (function_) function_(); }
+    static WARN_UNUSED_RESULT OnScopeLeave create(Function&& function) { return OnScopeLeave(std::move(function)); }
+    // clang-format on
    private:
     Function function_;
   };
 
-  void PrintUsage(const char* name, int default_timeout) {
+  int PrintUsage(const char* name) {
     // clang-format off
     std::cout
-        << "Usage: " << name << " [options]\n"
-        << "Options:\n"
-        << "  -p \"pattern\"  : Include tests matching the pattern\n"
-        << "  -p \"-pattern\" : Exclude tests matching the pattern\n"
-        << "  -t \"timeout\"  : Set the default timeout value (in milliseconds, default: " << default_timeout << ")\n"
-        << "  -c            : Disable color output\n"
-        << "  -f            : Force mode, run all, including skipped tests\n"
-        << "  -s            : Silent mode, suppress stdout and stderr\n"
-        << "  -h, --help    : Show this help message\n\n"
-        << "Driven by MyTest (v" << kCalVersion << ")\n";
+      << "Usage: " << name << " [options]\n"
+      << "Options:\n"
+      << "  -p \"pattern\"  : Include tests matching the pattern\n"
+      << "  -p \"-pattern\" : Exclude tests matching the pattern\n"
+      << "  -t timeout    : Set the timeout value (in milliseconds, default: " << timeout_ << ")\n"
+      << "  -c            : Disable color output\n"
+      << "  -f            : Force mode, run all, including skipped tests\n"
+      << "  -s            : Silent mode, suppress stdout and stderr\n"
+      << "  -h, --help    : Show this help message\n\n"
+      << "Tests executed by the integrated testing utility, MyTest (v" << kCalVersion << ")\n";
     // clang-format on
+    return 0;
   }
 
-  int default_timeout_;
+  int timeout_ = kDefaultTimeoutMS;
   bool force_ = false;
   bool silent_ = false;
   bool condition_passed_ = true;
@@ -446,7 +409,7 @@ class MyTest {
   std::unordered_map<std::string, std::function<void()>> test_after_each_;
   std::unordered_map<std::string, std::function<void()>> test_before_;
   std::unordered_map<std::string, std::function<void()>> test_after_;
-  MyTest() : default_timeout_(kDefaultTimeoutMS) {}
+  MyTest() {}
   MyTest(const MyTest&) = delete;
   MyTest& operator=(const MyTest&) = delete;
 };
@@ -462,7 +425,7 @@ class MyTest {
 
 #define TEST_(is_sync, group, name, ...)                                       \
   void group##name##_impl(std::function<void()> done);                         \
-  void group##name(int timeout_ms = MyTest::Instance().default_timeout()) {    \
+  void group##name(int timeout_ms = MyTest::Instance().timeout()) {            \
     auto promise = std::make_shared<std::promise<void>>();                     \
     auto future = promise->get_future();                                       \
     auto done = [promise, &future]() {                                         \

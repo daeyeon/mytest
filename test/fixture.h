@@ -1,4 +1,5 @@
 #pragma once
+#include <thread>
 
 struct Fixture {
   int before;
@@ -8,6 +9,7 @@ struct Fixture {
   int skip;
   int count;
   int expect;
+  std::thread::id main_thread_id;
 
   Fixture() { Reset(); }
 
