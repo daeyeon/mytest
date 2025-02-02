@@ -3,8 +3,12 @@ name: Test Linux
 on: [push, pull_request]
 
 jobs:
-  test-linux:
-    runs-on: ubuntu-latest
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest]
+        compiler: [gcc, clang]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -13,7 +17,11 @@ jobs:
       - name: Environment Information
         run: npx envinfo
       - name: Config
-        run: cmake -B out
+        if: matrix.compiler == 'gcc'
+        run: cmake -B out -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++
+      - name: Config
+        if: matrix.compiler == 'clang'
+        run: cmake -B out -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
       - name: Build
         run: make -C out -j$(nproc)
       - name: Test
