@@ -460,45 +460,20 @@ class MyTest {
   } group##name##_register;                                                    \
   void group##name##_impl()
 
-#define TEST(group, name, ...)                                                 \
-  void group##name##_impl();                                                   \
-  std::future<void> group##name(int timeout_ms =                               \
-                                    MyTest::Instance().default_timeout()) {    \
-    auto promise = std::make_shared<std::promise<void>>();                     \
-    auto future = promise->get_future();                                       \
-    std::thread([promise]() {                                                  \
-      try {                                                                    \
-        group##name##_impl();                                                  \
-        promise->set_value();                                                  \
-      } catch (...) {                                                          \
-        promise->set_exception(std::current_exception());                      \
-      }                                                                        \
-    }).detach();                                                               \
-    if (future.wait_for(std::chrono::milliseconds(timeout_ms)) ==              \
-        std::future_status::timeout) {                                         \
-      throw MyTest::TestTimeoutException(#group ":" #name);                    \
-    }                                                                          \
-    future.get();                                                              \
-    return future;                                                             \
-  }                                                                            \
-  struct group##name##_Register {                                              \
-    group##name##_Register() {                                                 \
-      MyTest::Instance().RegisterTest(                                         \
-          #group ":" #name, []() { return group##name(__VA_ARGS__); });        \
-    }                                                                          \
-  } group##name##_register;                                                    \
-  void group##name##_impl()
-
-#define TEST_ASYNC(group, name, ...)                                           \
+#define TEST_(is_sync, group, name, ...)                                       \
   void group##name##_impl(std::function<void()> done);                         \
-  std::future<void> group##name(int timeout_ms =                               \
-                                    MyTest::Instance().default_timeout()) {    \
+  void group##name(int timeout_ms = MyTest::Instance().default_timeout()) {    \
     auto promise = std::make_shared<std::promise<void>>();                     \
     auto future = promise->get_future();                                       \
-    auto done = [promise]() { promise->set_value(); };                         \
+    auto done = [promise, &future]() {                                         \
+      if (future.valid() && future.wait_for(std::chrono::seconds(0)) ==        \
+                                std::future_status::timeout)                   \
+        promise->set_value();                                                  \
+    };                                                                         \
     std::thread([done, promise]() {                                            \
       try {                                                                    \
         group##name##_impl(done);                                              \
+        if (is_sync) done();                                                   \
       } catch (...) {                                                          \
         promise->set_exception(std::current_exception());                      \
       }                                                                        \
@@ -508,14 +483,20 @@ class MyTest {
       throw MyTest::TestTimeoutException(#group ":" #name);                    \
     }                                                                          \
     future.get();                                                              \
-    return future;                                                             \
   }                                                                            \
   struct group##name##_Register {                                              \
     group##name##_Register() {                                                 \
       MyTest::Instance().RegisterTest(                                         \
           #group ":" #name, []() { return group##name(__VA_ARGS__); });        \
     }                                                                          \
-  } group##name##_register;                                                    \
+  } group##name##_register;
+
+#define TEST(group, name, ...)                                                 \
+  TEST_(true, group, name, __VA_ARGS__)                                        \
+  void group##name##_impl(std::function<void()>)
+
+#define TEST_ASYNC(group, name, ...)                                           \
+  TEST_(false, group, name, __VA_ARGS__)                                       \
   void group##name##_impl(std::function<void()> done)
 
 #define TEST_BEFORE_EACH(group)                                                \
