@@ -1,0 +1,27 @@
+name: Test MacOS
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [macos-latest]
+        compiler: [clang]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          submodules: true
+      - name: Environment Information
+        run: npx envinfo
+      - name: Config
+        if: matrix.compiler == 'clang'
+        run: cmake -B out -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
+      - name: Build
+        run: make -C out -j$(nproc)
+      - name: Test
+        run: out/test.x -s
+      - name: Example
+        run: out/example.x -s
