@@ -177,6 +177,10 @@ class MyTest {
   const char* colors(size_t idx) { return colors_[idx]; }
 
   int RunAllTests(int argc, char* argv[]) {
+    // Disable buffering for stdout and stderr
+    setbuf(stdout, nullptr);
+    setbuf(stderr, nullptr);
+
     // Parse CLI arguments
     bool use_color = true;
     bool silent = false;
@@ -353,7 +357,7 @@ class MyTest {
 
  private:
   static constexpr int kDefaultTimeoutMS = 60000;
-  static constexpr const char* kCalVersion = "25.02.0";
+  static constexpr const char* kCalVersion = "25.02.14";
 
 #if !defined(WARN_UNUSED_RESULT) && defined(__GNUC__)
 #define WARN_UNUSED_RESULT __attribute__((__warn_unused_result__))
