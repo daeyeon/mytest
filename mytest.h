@@ -138,8 +138,8 @@ class MyTest {
       fflush(stderr);
       stdout_backup = dup(fileno(stdout));
       stderr_backup = dup(fileno(stderr));
-      freopen("/dev/null", "w", stdout);
-      freopen("/dev/null", "w", stderr);
+      __attribute__((unused)) FILE* fp1 = freopen("/dev/null", "w", stdout);
+      __attribute__((unused)) FILE* fp2 = freopen("/dev/null", "w", stderr);
     } else {
       if (stdout_backup != -1) {
         fflush(stdout);
