@@ -130,6 +130,12 @@ class MyTest {
     if (prev_silent) SilenceOutput(true);
   }
 
+#if !defined(UNUSED) && defined(__GNUC__)
+#define UNUSED __attribute__((unused))
+#else
+#define UNUSED
+#endif
+
   void SilenceOutput(bool silent) {
     static int stdout_backup = -1;
     static int stderr_backup = -1;
@@ -138,8 +144,8 @@ class MyTest {
       fflush(stderr);
       stdout_backup = dup(fileno(stdout));
       stderr_backup = dup(fileno(stderr));
-      __attribute__((unused)) FILE* fp1 = freopen("/dev/null", "w", stdout);
-      __attribute__((unused)) FILE* fp2 = freopen("/dev/null", "w", stderr);
+      UNUSED FILE* fp1 = freopen("/dev/null", "w", stdout);
+      UNUSED FILE* fp2 = freopen("/dev/null", "w", stderr);
     } else {
       if (stdout_backup != -1) {
         fflush(stdout);
