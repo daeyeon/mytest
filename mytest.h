@@ -357,7 +357,7 @@ class MyTest {
 
  private:
   static constexpr int kDefaultTimeoutMS = 60000;
-  static constexpr const char* kCalVersion = "25.02.14";
+  static constexpr const char* kCalVersion = "25.02.16";
 
 #if !defined(WARN_UNUSED_RESULT) && defined(__GNUC__)
 #define WARN_UNUSED_RESULT __attribute__((__warn_unused_result__))
@@ -385,12 +385,12 @@ class MyTest {
     std::cout
       << "Usage: " << name << " [options]\n"
       << "Options:\n"
-      << "  -p \"pattern\"  : Include tests matching the pattern\n"
-      << "  -p \"-pattern\" : Exclude tests matching the pattern\n"
-      << "  -t timeout    : Set the timeout value (in milliseconds, default: " << timeout_ << ")\n"
+      << "  -p \"PATTERN\"  : Include tests matching PATTERN\n"
+      << "  -p \"-PATTERN\" : Exclude tests matching PATTERN\n"
+      << "  -t TIMEOUT    : Set the timeout value in milliseconds (default: " << timeout_ << ")\n"
       << "  -c            : Disable color output\n"
-      << "  -f            : Force mode, run all, including skipped tests\n"
-      << "  -s            : Silent mode, suppress stdout and stderr\n"
+      << "  -f            : Force mode, run all tests, including skipped ones\n"
+      << "  -s            : Silent mode (suppress stdout and stderr output)\n"
       << "  -h, --help    : Show this help message\n\n"
       << "Tests executed by the integrated testing utility, MyTest (v" << kCalVersion << ")\n";
     // clang-format on

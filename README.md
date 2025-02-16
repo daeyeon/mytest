@@ -84,12 +84,12 @@ The following options are available:
 out/example.x -h
 
 Options:
-  -p "pattern"  : Include tests matching the pattern
-  -p "-pattern" : Exclude tests matching the pattern
-  -t "timeout"  : Set the timeout value (in milliseconds, default: 60000)
+  -p "PATTERN"  : Include tests matching PATTERN
+  -p "-PATTERN" : Exclude tests matching PATTERN
+  -t TIMEOUT    : Set the timeout value in milliseconds (default: 60000)
   -c            : Disable color output
-  -f            : Force mode, run all, including skipped tests
-  -s            : Silent mode, suppress stdout and stderr
+  -f            : Force mode, run all tests, including skipped ones
+  -s            : Silent mode (suppress stdout and stderr output)
   -h, --help    : Show this help message
 ```
 
