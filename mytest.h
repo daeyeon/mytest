@@ -347,6 +347,8 @@ class MyTest {
 
         if (failure && !expect_failure_) printf("\n");
         PrintEnd(failure, skipped, name);
+
+        group_failure = group_failure || failure;
       }
 
       if (test_after_.count(group_name)) {
@@ -354,7 +356,7 @@ class MyTest {
         group_failure = group_failure || failure;
       }
 
-      PrintEnd(group_failure || num_failure > 0, group_skipped, group_name);
+      PrintEnd(group_failure, group_skipped, group_name);
     }
 
     PrintResult();
