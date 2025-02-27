@@ -363,10 +363,6 @@ class MyTest {
     return num_failure > 0 ? 1 : 0;
   }
 
- private:
-  static constexpr int kDefaultTimeoutMS = 60000;
-  static constexpr const char* kCalVersion = "25.02.16";
-
 #if !defined(WARN_UNUSED_RESULT) && defined(__GNUC__)
 #define WARN_UNUSED_RESULT __attribute__((__warn_unused_result__))
 #else
@@ -387,6 +383,10 @@ class MyTest {
    private:
     Function function_;
   };
+
+ private:
+  static constexpr int kDefaultTimeoutMS = 60000;
+  static constexpr const char* kCalVersion = "25.02.27";
 
   int PrintUsage(const char* name) {
     // clang-format off
