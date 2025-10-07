@@ -2,6 +2,7 @@
 #include "mytest.h"
 
 int global;
+int process_counter = 0;
 
 TEST(TestSuite, SyncTest) {
   ASSERT_EQ(1, global);
@@ -67,6 +68,17 @@ TEST(TestSuite, ExcludeTest) {
 
 TEST(TestSuite2, ExcludeTest) {
   ASSERT_EQ(1, 0);
+}
+
+// Each ProcessSuite test executes in an isolated process; the global counter
+// remains zero in the parent between tests.
+TEST_PROCESS(ProcessSuite, RunsInSeparateProcess) {
+  ++process_counter;
+  ASSERT_EQ(process_counter, 1);
+}
+
+TEST_PROCESS(ProcessSuite, ProcessStateIsolated) {
+  ASSERT_EQ(process_counter, 0);
 }
 
 TEST_EXCLUDE(TestSuite, ExcludeTest)

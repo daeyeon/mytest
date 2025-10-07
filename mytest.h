@@ -8,18 +8,27 @@
 
 #pragma once
 
+#include <fcntl.h>
+#include <sys/types.h>
+#include <sys/wait.h>
 #include <unistd.h>  // dup, dup2, fileno, close
+#include <cerrno>
+#include <chrono>
+#include <csignal>
 #include <cstring>
 #include <functional>
 #include <future>
 #include <iostream>
 #include <map>
+#include <optional>
 #include <regex>
 #include <sstream>
 #include <string>
 #include <thread>
+#include <tuple>
 #include <unordered_map>
-#include <variant>
+#include <unordered_set>
+#include <utility>
 #include <vector>
 
 /*
@@ -61,6 +70,11 @@
     std::this_thread::sleep_for(std::chrono::seconds(1));
     ASSERT_EQ(1, global);
     done();
+  }
+
+  TEST_PROCESS(ProcSuite, RunsInFork) {
+    global = 2; // Child uses its own copy; parent/global state stays untouched.
+    ASSERT_EQ(global, 2);
   }
 
   TEST_BEFORE_EACH(TestSuite) {
@@ -165,7 +179,7 @@ class MyTest {
   }
 
   // clang-format off
-  void RegisterTest(const std::string& group_name, std::function<void()> test) { tests_.emplace_back(group_name, test); }
+  void RegisterTest(const std::string& group_name, std::function<void()> test, std::optional<int> timeout = std::nullopt) { tests_.emplace_back(group_name, std::move(test)); if (timeout) test_timeouts_[group_name] = *timeout; }
   void RegisterTestBeforeEach(const std::string& group_name, std::function<void()> test) { test_before_each_[group_name] = test; }
   void RegisterTestAfterEach(const std::string& group_name, std::function<void()> test) { test_after_each_[group_name] = test; }
   void RegisterTestBefore(const std::string& group_name, std::function<void()> test) { test_before_[group_name] = test; }
@@ -173,6 +187,12 @@ class MyTest {
   void MarkConditionPassed(bool value) { condition_passed_ = value; }
   void MarkExpectFailure(bool value) { expect_failure_ = value; }
   void AddExcludePattern(const std::string& pattern) { exclude_patterns_.emplace_back(pattern); }
+  void RegisterProcessTest(const std::string& name) { process_tests_.insert(name); }
+  static std::optional<int> MakeTimeout() { return std::nullopt; }
+  template <typename T>
+  static std::optional<int> MakeTimeout(T value) { return std::optional<int>{static_cast<int>(value)}; }
+  bool ShouldRunInProcess(const std::string& name) const { return process_tests_.count(name) > 0; }
+  int ResolveProcessTimeout(const std::string& name) const { auto it = test_timeouts_.find(name); return it != test_timeouts_.end() ? it->second : timeout_; }
   // clang-format on
 
   bool force() { return force_; }
@@ -262,10 +282,11 @@ class MyTest {
     };
     // clang-format on
 
-    auto RunTest = [this, &colors, &silent](const std::string& name,
-                                            const TestFunction& test,
-                                            const std::string group_name =
-                                                "") -> std::tuple<bool, bool> {
+    auto RunTestWithHooks =
+        [this, &colors, &silent](
+            const std::string& name,
+            const TestFunction& test,
+            const std::string& group_name) -> std::tuple<bool, bool> {
       bool failure = false, skipped = false;
       condition_passed_ = true;
       expect_failure_ = false;
@@ -286,7 +307,7 @@ class MyTest {
           test_before_each_[group_name]();
         }
 
-        std::visit([](auto&& test) { test(); }, test);
+        test();
 
       } catch (const TestSkipException& e) {
         skipped = true;
@@ -318,6 +339,153 @@ class MyTest {
       return std::make_tuple(failure, skipped);
     };
 
+    auto RunTestInProcess = [this, &silent, &RunTestWithHooks](
+                                const std::string& name,
+                                const TestFunction& test,
+                                const std::string group_name =
+                                    "") -> std::tuple<bool, bool> {
+      int pipe_fds[2];
+      if (pipe(pipe_fds) == -1) {
+        printf("\nFailed to create pipe for %s\n", name.c_str());
+        return RunTestWithHooks(name, test, group_name);
+      }
+
+      pid_t pid = fork();
+      if (pid < 0) {
+        printf("\nFailed to fork process for %s\n", name.c_str());
+        close(pipe_fds[0]);
+        close(pipe_fds[1]);
+        return RunTestWithHooks(name, test, group_name);
+      }
+
+      if (pid == 0) {
+        // Child: redirect stdout/stderr to the pipe and run the test body.
+        close(pipe_fds[0]);
+        dup2(pipe_fds[1], STDOUT_FILENO);
+        dup2(pipe_fds[1], STDERR_FILENO);
+        close(pipe_fds[1]);
+
+        auto [failure, skipped] = RunTestWithHooks(name, test, group_name);
+        fflush(stdout);
+        fflush(stderr);
+        _exit(skipped ? 2 : failure ? 1 : 0);
+      }
+
+      // Parent: monitor output and exit status without blocking the main loop.
+      close(pipe_fds[1]);
+      if (fcntl(pipe_fds[0], F_SETFL, O_NONBLOCK) == -1) {
+        // Best effort; continue even if setting non-blocking fails.
+      }
+
+      std::string captured_output;
+      int process_timeout = ResolveProcessTimeout(name);
+      bool timed_out = false, child_finished = false, pipe_closed = false;
+      bool timeout_immediate = process_timeout <= 0;
+      int status = 0;
+      auto start = std::chrono::steady_clock::now();
+
+      while (!child_finished || !pipe_closed) {
+        if (!pipe_closed) {
+          char buffer[4096];
+          ssize_t count = read(pipe_fds[0], buffer, sizeof(buffer));
+          if (count > 0) {
+            captured_output.append(buffer, static_cast<size_t>(count));
+          } else if (count == 0) {
+            pipe_closed = true;
+          } else if (errno == EAGAIN || errno == EINTR) {
+            // Try again after waitpid/timeout checks.
+          } else {
+            pipe_closed = true;
+          }
+        }
+
+        // Wait for the child to exit, but keep the loop responsive (WNOHANG).
+        if (!child_finished) {
+          pid_t result = waitpid(pid, &status, WNOHANG);
+          if (result == pid) {
+            child_finished = true;
+          } else if (result == -1) {
+            child_finished = true;
+            status = -1;
+          }
+        }
+
+        if (!child_finished) {  // Enforce the configured timeout
+          if (timeout_immediate) {
+            timed_out = true;
+            kill(pid, SIGKILL);
+            waitpid(pid, &status, 0);
+            child_finished = true;
+            timeout_immediate = false;
+          } else if (process_timeout > 0) {
+            // clang-format off
+            auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start);
+            // clang-format on
+            if (elapsed.count() >= process_timeout) {
+              timed_out = true;
+              kill(pid, SIGKILL);
+              waitpid(pid, &status, 0);
+              child_finished = true;
+            }
+          }
+        }
+        if (!child_finished || !pipe_closed) {
+          std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+      }
+
+      close(pipe_fds[0]);
+
+      if (!silent && !captured_output.empty()) {
+        // Replay child output so it appears inline with the parent log.
+        std::cout << captured_output;
+        if (!captured_output.empty() && captured_output.back() != '\n') {
+          std::cout << std::endl;
+        }
+      }
+
+      bool failure = false, skipped = false;
+      if (timed_out) {
+        failure = true;
+        printf("\nTimed out : %s\n", name.c_str());
+      } else if (status == -1) {
+        failure = true;
+        printf("\nwaitpid failed for %s\n", name.c_str());
+      } else if (WIFEXITED(status)) {
+        int exit_code = WEXITSTATUS(status);
+        if (exit_code == 0) {
+          // success
+        } else if (exit_code == 2) {
+          skipped = true;
+        } else {
+          failure = true;
+        }
+      } else if (WIFSIGNALED(status)) {
+        failure = true;
+        // clang-format off
+        int sig = WTERMSIG(status); const char* sig_name = strsignal(sig);
+        printf("\nTerminated by signal %d (%s) : %s\n", sig, sig_name ? sig_name : "unknown",name.c_str());
+        // clang-format on
+      } else {
+        failure = true;
+      }
+
+      return std::make_tuple(failure, skipped);
+    };
+
+    auto RunTest = [this, &RunTestWithHooks, &RunTestInProcess](
+                       const std::string& name,
+                       const TestFunction& test,
+                       const std::string group_name = "",
+                       bool run_in_process = false) -> std::tuple<bool, bool> {
+      condition_passed_ = true;
+      expect_failure_ = false;
+      if (run_in_process) {
+        return RunTestInProcess(name, test, group_name);
+      }
+      return RunTestWithHooks(name, test, group_name);
+    };
+
     for (const auto& category : categorized_tests) {
       const std::string& group_name = category.first;
       const std::vector<TestPair>& group_tests = category.second;
@@ -341,7 +509,8 @@ class MyTest {
 
         PrintStart(name);
 
-        auto [failure, skipped] = RunTest(name, test, group_name);
+        auto [failure, skipped] =
+            RunTest(name, test, group_name, ShouldRunInProcess(name));
         (failure ? ++num_failure : (skipped ? ++num_skipped : ++num_success));
         ++num_ran_tests;
 
@@ -386,7 +555,7 @@ class MyTest {
 
  private:
   static constexpr int kDefaultTimeoutMS = 60000;
-  static constexpr const char* kCalVersion = "25.02.27";
+  static constexpr const char* kCalVersion = "25.10.07";
 
   int PrintUsage(const char* name) {
     // clang-format off
@@ -412,9 +581,10 @@ class MyTest {
   bool expect_failure_ = false;
   std::vector<const char*> colors_;
   std::vector<std::regex> exclude_patterns_;
+  std::unordered_set<std::string> process_tests_;
+  std::unordered_map<std::string, int> test_timeouts_;
 
-  using TestFunction =
-      std::variant<std::function<void()>, std::function<std::future<void>()>>;
+  using TestFunction = std::function<void()>;
   using TestPair = std::pair<std::string, TestFunction>;
   std::vector<TestPair> tests_;
   std::unordered_map<std::string, std::function<void()>> test_before_each_;
@@ -426,7 +596,7 @@ class MyTest {
   MyTest& operator=(const MyTest&) = delete;
 };
 
-#define TEST0(group, name)                                                     \
+#define TEST_INLINE(group, name)                                               \
   void group##name##_impl();                                                   \
   struct group##name##_Register {                                              \
     group##name##_Register() {                                                 \
@@ -435,15 +605,16 @@ class MyTest {
   } group##name##_register;                                                    \
   void group##name##_impl()
 
-#define TEST_(is_sync, group, name, ...)                                       \
+#define TEST_INTERNAL(is_sync, force_process, group, name, ...)                \
   void group##name##_impl(std::function<void()> done);                         \
   void group##name(int timeout_ms = MyTest::Instance().timeout()) {            \
     auto promise = std::make_shared<std::promise<void>>();                     \
     auto future = promise->get_future();                                       \
     auto done = [promise, &future]() {                                         \
       if (future.valid() && future.wait_for(std::chrono::seconds(0)) ==        \
-                                std::future_status::timeout)                   \
+                                std::future_status::timeout) {                 \
         promise->set_value();                                                  \
+      }                                                                        \
     };                                                                         \
     std::thread([done, promise]() {                                            \
       try {                                                                    \
@@ -462,16 +633,27 @@ class MyTest {
   struct group##name##_Register {                                              \
     group##name##_Register() {                                                 \
       MyTest::Instance().RegisterTest(                                         \
-          #group ":" #name, []() { return group##name(__VA_ARGS__); });        \
+          #group ":" #name,                                                    \
+          []() { return group##name(__VA_ARGS__); },                           \
+          MyTest::MakeTimeout(__VA_ARGS__));                                   \
+      if (force_process) {                                                     \
+        MyTest::Instance().RegisterProcessTest(#group ":" #name);              \
+      }                                                                        \
     }                                                                          \
   } group##name##_register;
 
 #define TEST(group, name, ...)                                                 \
-  TEST_(true, group, name, __VA_ARGS__)                                        \
+  TEST_INTERNAL(true, false, group, name, __VA_ARGS__)                         \
+  void group##name##_impl(std::function<void()>)
+
+#define TEST0(group, name) TEST_INLINE(group, name)
+
+#define TEST_PROCESS(group, name, ...)                                         \
+  TEST_INTERNAL(true, true, group, name, __VA_ARGS__)                          \
   void group##name##_impl(std::function<void()>)
 
 #define TEST_ASYNC(group, name, ...)                                           \
-  TEST_(false, group, name, __VA_ARGS__)                                       \
+  TEST_INTERNAL(false, false, group, name, __VA_ARGS__)                        \
   void group##name##_impl(std::function<void()> done)
 
 #define TEST_BEFORE_EACH(group)                                                \

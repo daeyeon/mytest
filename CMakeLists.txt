@@ -9,6 +9,6 @@ target_include_directories(mytest INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
 
 add_executable(example.x example.cc)
 
-file(GLOB TEST_SRCS test/*.cc)
+file(GLOB_RECURSE TEST_SRCS CONFIGURE_DEPENDS test/*.cc)
 add_executable(test.x ${TEST_SRCS})
 target_link_libraries(test.x PRIVATE mytest)
