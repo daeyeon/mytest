@@ -253,14 +253,17 @@ class MyTest {
                use_color ? "\033[33m" : ""};
     const char** colors = colors_.data();
 
-    // Categorize and filter tests by name in alphabetical and numerical order.
-    std::map<std::string, std::vector<TestPair>> categorized_tests;
+    // Categorize tests while preserving registration order of groups.
+    std::unordered_map<std::string, std::vector<TestPair>> categorized_tests;
+    std::vector<std::string> group_order;
     for (const auto& test_pair : tests_) {
       const std::string& name = test_pair.first;
       if (!should_run(name)) continue;
 
       num_filtered_tests++;
       auto group_name = name.substr(0, name.find(':'));
+      if (!categorized_tests.count(group_name))
+        group_order.push_back(group_name);
       categorized_tests[group_name].push_back(test_pair);
     }
 
@@ -486,9 +489,8 @@ class MyTest {
       return RunTestWithHooks(name, test, group_name);
     };
 
-    for (const auto& category : categorized_tests) {
-      const std::string& group_name = category.first;
-      const std::vector<TestPair>& group_tests = category.second;
+    for (const auto& group_name : group_order) {
+      const auto& group_tests = categorized_tests[group_name];
       bool group_failure = false;
       bool group_skipped = false;
 
