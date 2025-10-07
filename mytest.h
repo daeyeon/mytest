@@ -19,7 +19,7 @@
 #include <functional>
 #include <future>
 #include <iostream>
-#include <map>
+#include <memory>
 #include <optional>
 #include <regex>
 #include <sstream>
@@ -110,8 +110,40 @@
    MYTEST_CONFIG_USE_MAIN : Define to use this utility's main function.
 */
 
+namespace mytest {
+struct TestResult {
+  std::string suite;
+  std::string name;
+  bool failure = false;
+  bool skipped = false;
+  std::string message;
+};
+
+struct Summary {
+  int total = 0;
+  int failures = 0;
+  int skipped = 0;
+};
+
+struct Options {
+  std::string output_path;
+};
+
+class Reporter {
+ public:
+  virtual ~Reporter() = default;
+  virtual void OnComplete(const std::vector<TestResult>& results,
+                          const Summary& summary,
+                          const Options& options) = 0;
+};
+}  // namespace mytest
+
 class MyTest {
  public:
+  using TestResult = mytest::TestResult;
+  using ReportSummary = mytest::Summary;
+  using ReportOptions = mytest::Options;
+
   static MyTest& Instance() {
     static MyTest instance;
     return instance;
@@ -188,6 +220,7 @@ class MyTest {
   void MarkExpectFailure(bool value) { expect_failure_ = value; }
   void AddExcludePattern(const std::string& pattern) { exclude_patterns_.emplace_back(pattern); }
   void RegisterProcessTest(const std::string& name) { process_tests_.insert(name); }
+  void SetReporter(std::shared_ptr<mytest::Reporter> reporter) { reporter_ = std::move(reporter); }
   static std::optional<int> MakeTimeout() { return std::nullopt; }
   template <typename T>
   static std::optional<int> MakeTimeout(T value) { return std::optional<int>{static_cast<int>(value)}; }
@@ -207,10 +240,14 @@ class MyTest {
     setbuf(stdout, nullptr);
     setbuf(stderr, nullptr);
 
+    test_results_.clear();
+
     // Parse CLI arguments
     bool use_color = true;
     bool silent = false;
     std::vector<std::regex> include_patterns;
+    bool use_report = false;
+    std::string report_output_path;
 
     for (int i = 1; i < argc; ++i) {
       std::string arg = argv[i];
@@ -227,6 +264,17 @@ class MyTest {
       } else if (arg == "-c") { use_color = false;
       } else if (arg == "-s") { silent = true;
       } else if (arg == "-f") { force_ = true;
+      } else if (arg == "-r") {
+        if (reporter_ == nullptr) {
+          std::cerr << "Report requested but no report writer registered." << std::endl;
+          return 1;
+        }
+        use_report = true;
+        if (i + 1 < argc && argv[i + 1][0] != '-') {
+          report_output_path = argv[++i];
+        } else {
+          report_output_path.clear();
+        }
       } else if (arg == "-h" || arg == "--help") { return PrintUsage(argv[0]); }
       // clang-format on
     }
@@ -285,12 +333,13 @@ class MyTest {
     };
     // clang-format on
 
-    auto RunTestWithHooks =
-        [this, &colors, &silent](
-            const std::string& name,
-            const TestFunction& test,
-            const std::string& group_name) -> std::tuple<bool, bool> {
+    auto RunTestWithHooks = [this, &colors, &silent](
+                                const std::string& name,
+                                const TestFunction& test,
+                                const std::string& group_name)
+        -> std::tuple<bool, bool, std::string> {
       bool failure = false, skipped = false;
+      std::string message;
       condition_passed_ = true;
       expect_failure_ = false;
 
@@ -315,19 +364,24 @@ class MyTest {
       } catch (const TestSkipException& e) {
         skipped = true;
         printf("\n%s\n", e.what());
+        message = e.what();
       } catch (const TestAssertException& e) {
         failure = true;
         auto color = colors[expect_failure_ ? RESET : RED];
         printf("\n%s%s%s\n", color, e.what(), colors[RESET]);
+        message = e.what();
       } catch (const TestTimeoutException& e) {
         failure = true;
         printf("\n%s\n", e.what());
+        message = e.what();
       } catch (const std::exception& e) {
         printf("\nException : %s\n", e.what());
         failure = true;
+        message = e.what();
       } catch (...) {
         printf("\nException : Unknown\n");
         failure = true;
+        message = "Unknown exception";
       }
 
       if (expect_failure_) {
@@ -339,18 +393,22 @@ class MyTest {
         }
       }
 
-      return std::make_tuple(failure, skipped);
+      if (failure && message.empty()) message = "See console output.";
+      if (skipped && message.empty()) message = "Skipped.";
+      return std::make_tuple(failure, skipped, message);
     };
 
     auto RunTestInProcess = [this, &silent, &RunTestWithHooks](
                                 const std::string& name,
                                 const TestFunction& test,
                                 const std::string group_name =
-                                    "") -> std::tuple<bool, bool> {
+                                    "") -> std::tuple<bool, bool, std::string> {
       int pipe_fds[2];
       if (pipe(pipe_fds) == -1) {
         printf("\nFailed to create pipe for %s\n", name.c_str());
-        return RunTestWithHooks(name, test, group_name);
+        auto [failure, skipped, message] =
+            RunTestWithHooks(name, test, group_name);
+        return std::make_tuple(failure, skipped, message);
       }
 
       pid_t pid = fork();
@@ -358,7 +416,9 @@ class MyTest {
         printf("\nFailed to fork process for %s\n", name.c_str());
         close(pipe_fds[0]);
         close(pipe_fds[1]);
-        return RunTestWithHooks(name, test, group_name);
+        auto [failure, skipped, message] =
+            RunTestWithHooks(name, test, group_name);
+        return std::make_tuple(failure, skipped, message);
       }
 
       if (pid == 0) {
@@ -368,125 +428,133 @@ class MyTest {
         dup2(pipe_fds[1], STDERR_FILENO);
         close(pipe_fds[1]);
 
-        auto [failure, skipped] = RunTestWithHooks(name, test, group_name);
+        auto [failure, skipped, message] =
+            RunTestWithHooks(name, test, group_name);
+        (void)message;
         fflush(stdout);
         fflush(stderr);
         _exit(skipped ? 2 : failure ? 1 : 0);
       }
-
       // Parent: monitor output and exit status without blocking the main loop.
       close(pipe_fds[1]);
-      if (fcntl(pipe_fds[0], F_SETFL, O_NONBLOCK) == -1) {
-        // Best effort; continue even if setting non-blocking fails.
-      }
+      (void)fcntl(pipe_fds[0], F_SETFL, O_NONBLOCK);
 
       std::string captured_output;
-      int process_timeout = ResolveProcessTimeout(name);
-      bool timed_out = false, child_finished = false, pipe_closed = false;
-      bool timeout_immediate = process_timeout <= 0;
       int status = 0;
-      auto start = std::chrono::steady_clock::now();
+      bool timed_out = false;
+      bool pipe_open = true;
+      bool child_alive = true;
+      const int process_timeout = ResolveProcessTimeout(name);
+      const auto deadline = process_timeout > 0
+                                ? std::chrono::steady_clock::now() +
+                                      std::chrono::milliseconds(process_timeout)
+                                : std::chrono::steady_clock::time_point::max();
 
-      while (!child_finished || !pipe_closed) {
-        if (!pipe_closed) {
+      while (pipe_open || child_alive) {
+        if (pipe_open) {
           char buffer[4096];
           ssize_t count = read(pipe_fds[0], buffer, sizeof(buffer));
-          if (count > 0) {
+          if (count > 0)
             captured_output.append(buffer, static_cast<size_t>(count));
-          } else if (count == 0) {
-            pipe_closed = true;
-          } else if (errno == EAGAIN || errno == EINTR) {
-            // Try again after waitpid/timeout checks.
-          } else {
-            pipe_closed = true;
-          }
+          else if (count == 0)
+            pipe_open = false;
+          else if (!(errno == EAGAIN || errno == EINTR))
+            pipe_open = false;
         }
 
         // Wait for the child to exit, but keep the loop responsive (WNOHANG).
-        if (!child_finished) {
-          pid_t result = waitpid(pid, &status, WNOHANG);
-          if (result == pid) {
-            child_finished = true;
-          } else if (result == -1) {
-            child_finished = true;
-            status = -1;
-          }
-        }
-
-        if (!child_finished) {  // Enforce the configured timeout
-          if (timeout_immediate) {
-            timed_out = true;
-            kill(pid, SIGKILL);
-            waitpid(pid, &status, 0);
-            child_finished = true;
-            timeout_immediate = false;
-          } else if (process_timeout > 0) {
-            // clang-format off
-            auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start);
-            // clang-format on
-            if (elapsed.count() >= process_timeout) {
+        if (child_alive) {
+          pid_t res = waitpid(pid, &status, WNOHANG);
+          if (res == pid) {
+            child_alive = false;
+          } else if (res == 0) {
+            if (std::chrono::steady_clock::now() >= deadline) {
               timed_out = true;
               kill(pid, SIGKILL);
               waitpid(pid, &status, 0);
-              child_finished = true;
+              child_alive = false;
+            }
+          } else if (res == -1) {
+            if (errno == EINTR) {
+              status = 0;
+            } else {
+              status = -1;
+              child_alive = false;
             }
           }
         }
-        if (!child_finished || !pipe_closed) {
-          std::this_thread::sleep_for(std::chrono::milliseconds(5));
-        }
+
+        if (!pipe_open && !child_alive) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
       }
 
       close(pipe_fds[0]);
 
       if (!silent && !captured_output.empty()) {
-        // Replay child output so it appears inline with the parent log.
         std::cout << captured_output;
-        if (!captured_output.empty() && captured_output.back() != '\n') {
-          std::cout << std::endl;
-        }
+        if (captured_output.back() != '\n') std::cout << std::endl;
       }
 
       bool failure = false, skipped = false;
+      std::string message;
+
       if (timed_out) {
         failure = true;
         printf("\nTimed out : %s\n", name.c_str());
+        message = "Test timed out.";
       } else if (status == -1) {
         failure = true;
         printf("\nwaitpid failed for %s\n", name.c_str());
+        message = "waitpid failed.";
       } else if (WIFEXITED(status)) {
         int exit_code = WEXITSTATUS(status);
-        if (exit_code == 0) {
-          // success
-        } else if (exit_code == 2) {
+        if (exit_code == 2) {
           skipped = true;
-        } else {
+          message = captured_output.empty() ? "Skipped." : captured_output;
+        } else if (exit_code != 0) {
           failure = true;
+          message =
+              captured_output.empty() ? "See console output." : captured_output;
+        } else if (!captured_output.empty()) {
+          message = captured_output;
         }
       } else if (WIFSIGNALED(status)) {
         failure = true;
-        // clang-format off
-        int sig = WTERMSIG(status); const char* sig_name = strsignal(sig);
-        printf("\nTerminated by signal %d (%s) : %s\n", sig, sig_name ? sig_name : "unknown",name.c_str());
-        // clang-format on
+        int sig = WTERMSIG(status);
+        const char* sig_name = strsignal(sig);
+        printf("\nTerminated by signal %d (%s) : %s\n",
+               sig,
+               sig_name ? sig_name : "unknown",
+               name.c_str());
+        std::ostringstream oss;
+        oss << "Terminated by signal " << sig;
+        if (sig_name) oss << " (" << sig_name << ")";
+        message = oss.str();
       } else {
         failure = true;
+        message = "Unknown child status.";
       }
 
-      return std::make_tuple(failure, skipped);
+      if (failure && message.empty()) message = "See console output.";
+      return std::make_tuple(failure, skipped, message);
     };
 
     auto RunTest = [this, &RunTestWithHooks, &RunTestInProcess](
                        const std::string& name,
                        const TestFunction& test,
                        const std::string group_name = "",
-                       bool run_in_process = false) -> std::tuple<bool, bool> {
+                       bool run_in_process =
+                           false) -> std::tuple<bool, bool, std::string> {
       condition_passed_ = true;
       expect_failure_ = false;
-      if (run_in_process) {
-        return RunTestInProcess(name, test, group_name);
+      auto [failure, skipped, message] =
+          run_in_process ? RunTestInProcess(name, test, group_name)
+                         : RunTestWithHooks(name, test, group_name);
+      while (!message.empty() &&
+             (message.back() == '\n' || message.back() == '\r')) {
+        message.pop_back();
       }
-      return RunTestWithHooks(name, test, group_name);
+      return std::make_tuple(failure, skipped, message);
     };
 
     for (const auto& group_name : group_order) {
@@ -497,7 +565,9 @@ class MyTest {
       PrintStart(group_name);
 
       if (test_before_.count(group_name)) {
-        auto [failure, skipped] = RunTest(group_name, test_before_[group_name]);
+        auto [failure, skipped, message] =
+            RunTest(group_name, test_before_[group_name]);
+        (void)message;
         if (skipped) {
           group_skipped = true;
           continue;
@@ -511,7 +581,7 @@ class MyTest {
 
         PrintStart(name);
 
-        auto [failure, skipped] =
+        auto [failure, skipped, message] =
             RunTest(name, test, group_name, ShouldRunInProcess(name));
         (failure ? ++num_failure : (skipped ? ++num_skipped : ++num_success));
         ++num_ran_tests;
@@ -519,11 +589,28 @@ class MyTest {
         if (failure && !expect_failure_) printf("\n");
         PrintEnd(failure, skipped, name);
 
+        auto colon = name.find(':');
+        if (colon != std::string::npos) {
+          TestResult result;
+          result.suite = name.substr(0, colon);
+          result.name = name.substr(colon + 1);
+          result.failure = failure;
+          result.skipped = skipped;
+          result.message = std::move(message);
+          while (!result.message.empty() && (result.message.back() == '\n' ||
+                                             result.message.back() == '\r')) {
+            result.message.pop_back();
+          }
+          test_results_.push_back(std::move(result));
+        }
+
         group_failure = group_failure || failure;
       }
 
       if (test_after_.count(group_name)) {
-        auto [failure, skipped] = RunTest(group_name, test_after_[group_name]);
+        auto [failure, skipped, message] =
+            RunTest(group_name, test_after_[group_name]);
+        (void)message;
         group_failure = group_failure || failure;
       }
 
@@ -531,6 +618,12 @@ class MyTest {
     }
 
     PrintResult();
+    if (reporter_ && use_report) {
+      ReportSummary summary{num_ran_tests, num_failure, num_skipped};
+      ReportOptions options;
+      options.output_path = report_output_path;
+      reporter_->OnComplete(test_results_, summary, options);
+    }
     return num_failure > 0 ? 1 : 0;
   }
 
@@ -570,6 +663,7 @@ class MyTest {
       << "  -c            : Disable color output\n"
       << "  -f            : Force mode, run all tests, including skipped ones\n"
       << "  -s            : Silent mode (suppress stdout and stderr output)\n"
+      << "  -r [FILE]     : Write report via registered reporter (optional FILE)\n"
       << "  -h, --help    : Show this help message\n\n"
       << "Tests executed by the integrated testing utility, MyTest (v" << kCalVersion << ")\n";
     // clang-format on
@@ -585,6 +679,8 @@ class MyTest {
   std::vector<std::regex> exclude_patterns_;
   std::unordered_set<std::string> process_tests_;
   std::unordered_map<std::string, int> test_timeouts_;
+  std::vector<TestResult> test_results_;
+  std::shared_ptr<mytest::Reporter> reporter_;
 
   using TestFunction = std::function<void()>;
   using TestPair = std::pair<std::string, TestFunction>;
@@ -718,6 +814,9 @@ class MyTest {
   } group_or_pattern##_##name##_add_exclude_pattern;
 #define TEST_EXCLUDE(...)                                                      \
   _VA(__VA_ARGS__, _TEST_EXCLUDE_ARG2, _TEST_EXCLUDE_ARG1)(__VA_ARGS__)
+
+#define SET_REPORTER(Reporter)                                                 \
+  MyTest::Instance().SetReporter(std::make_shared<Reporter>());
 
 #define RUN_ALL_TESTS(argc, argv) MyTest::Instance().RunAllTests(argc, argv)
 

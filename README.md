@@ -1,14 +1,13 @@
 # MyTest
 
-A lean, hassle-free testing utility for a little joy, my way.
+Lean, hassle-free testing utility, my way.
 
 ## Features
 
-- Synchronous and asynchronous test support
+- Synchronous, asynchronous, and process-isolated test support
 - Timeout support for potentially hanging tests
-- Test setup and teardown functions
-- Test exclusion and skipping
-- Command-line options for configuration
+- Lifecycle hooks with skip/exclude controls
+- Pluggable reporting (e.g., gtest XML) and CLI configuration
 
 ## Requirements
 
@@ -90,6 +89,7 @@ Options:
   -c            : Disable color output
   -f            : Force mode, run all tests, including skipped ones
   -s            : Silent mode (suppress stdout and stderr output)
+  -r [FILE]     : Write report via registered reporter (optional FILE)
   -h, --help    : Show this help message
 ```
 

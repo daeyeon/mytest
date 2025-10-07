@@ -1,5 +1,10 @@
-#define MYTEST_CONFIG_USE_MAIN
 #include "mytest.h"
+#include "mytest_report.h"
+
+int main(int argc, char* argv[]) {
+  SET_REPORTER(mytest::GTestXmlReporter);
+  return RUN_ALL_TESTS(argc, argv);
+}
 
 int global;
 int process_counter = 0;
