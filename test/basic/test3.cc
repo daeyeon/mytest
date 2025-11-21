@@ -28,6 +28,8 @@ TEST_AFTER(TestSuite4) {
   std::cout << "Runs  : once after all TestSuite4 tests\n" << std::endl;
   d.after++;
 
+  if (MyTest::Instance().IsJobIsolated()) return;
+
   EXPECT_EQ(c.after, 0);
   EXPECT_EQ(c.count, 0);
 

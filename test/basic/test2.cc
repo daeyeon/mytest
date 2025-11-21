@@ -28,6 +28,7 @@ TEST_AFTER_EACH(TestSuite2) {
 }
 
 TEST_BEFORE(TestSuite2) {
+  if (MyTest::Instance().IsJobIsolated()) { TEST_SKIP(); }
   std::cout << "\nRuns  : once before all TestSuite2 tests" << std::endl;
   b.before++;
 }
@@ -35,6 +36,8 @@ TEST_BEFORE(TestSuite2) {
 TEST_AFTER(TestSuite2) {
   std::cout << "Runs  : once after all TestSuite2 tests\n" << std::endl;
   b.after++;
+
+  if (MyTest::Instance().IsJobIsolated()) return;
 
   EXPECT_EQ(f.before, 1);
   EXPECT_EQ(f.after, 1);

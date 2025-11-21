@@ -226,6 +226,7 @@ class MyTest {
   static std::optional<int> MakeTimeout(T value) { return std::optional<int>{static_cast<int>(value)}; }
   bool ShouldRunInProcess(const std::string& name) const { return process_tests_.count(name) > 0; }
   int ResolveProcessTimeout(const std::string& name) const { auto it = test_timeouts_.find(name); return it != test_timeouts_.end() ? it->second : timeout_; }
+  bool IsJobIsolated() const { return job_isolation_; }
   // clang-format on
 
   bool force() { return force_; }
@@ -264,6 +265,7 @@ class MyTest {
       } else if (arg == "-c") { use_color = false;
       } else if (arg == "-s") { silent = true;
       } else if (arg == "-f") { force_ = true;
+      } else if (arg == "-j") { job_isolation_ = true;
       } else if (arg == "-r") {
         if (reporter_ == nullptr) {
           std::cerr << "Report requested but no report writer registered." << std::endl;
@@ -317,8 +319,10 @@ class MyTest {
 
     // clang-format off
                          printf("%s[==========]%s Running %d test case(s).\n", colors[GREEN], colors[RESET], num_filtered_tests);
-    auto PrintStart = [&colors](const std::string& name) {
-                         printf("%s[ RUN      ]%s %s\n", colors[GREEN], colors[RESET], name.c_str());
+    auto PrintStart = [&colors, this](const std::string& name) {
+                         printf("%s[ RUN      ]%s %s", colors[GREEN], colors[RESET], name.c_str());
+                         if (job_isolation_) printf(" (PID: %d)", getpid());
+                         printf("\n");
     };
     auto PrintEnd = [&colors](const bool failure, const bool skipped, const std::string& name) {
       if (failure)       printf("%s[  FAILED  ]%s %s\n", colors[RED], colors[RESET], name.c_str());
@@ -445,21 +449,27 @@ class MyTest {
       bool pipe_open = true;
       bool child_alive = true;
       const int process_timeout = ResolveProcessTimeout(name);
-      const auto deadline = process_timeout > 0
-                                ? std::chrono::steady_clock::now() +
-                                      std::chrono::milliseconds(process_timeout)
-                                : std::chrono::steady_clock::time_point::max();
+      const auto deadline =
+          process_timeout > 0
+              ? std::chrono::steady_clock::now() +
+                    std::chrono::milliseconds(process_timeout + 500)
+              : std::chrono::steady_clock::time_point::max();
 
       while (pipe_open || child_alive) {
         if (pipe_open) {
           char buffer[4096];
           ssize_t count = read(pipe_fds[0], buffer, sizeof(buffer));
-          if (count > 0)
+          if (count > 0) {
+            if (!silent) {
+              std::cout.write(buffer, count);
+              std::cout.flush();
+            }
             captured_output.append(buffer, static_cast<size_t>(count));
-          else if (count == 0)
+          } else if (count == 0) {
             pipe_open = false;
-          else if (!(errno == EAGAIN || errno == EINTR))
+          } else if (!(errno == EAGAIN || errno == EINTR)) {
             pipe_open = false;
+          }
         }
 
         // Wait for the child to exit, but keep the loop responsive (WNOHANG).
@@ -491,7 +501,6 @@ class MyTest {
       close(pipe_fds[0]);
 
       if (!silent && !captured_output.empty()) {
-        std::cout << captured_output;
         if (captured_output.back() != '\n') std::cout << std::endl;
       }
 
@@ -581,8 +590,8 @@ class MyTest {
 
         PrintStart(name);
 
-        auto [failure, skipped, message] =
-            RunTest(name, test, group_name, ShouldRunInProcess(name));
+        auto [failure, skipped, message] = RunTest(
+            name, test, group_name, ShouldRunInProcess(name) || job_isolation_);
         (failure ? ++num_failure : (skipped ? ++num_skipped : ++num_success));
         ++num_ran_tests;
 
@@ -612,6 +621,7 @@ class MyTest {
             RunTest(group_name, test_after_[group_name]);
         (void)message;
         group_failure = group_failure || failure;
+        if (failure) num_failure++;
       }
 
       PrintEnd(group_failure, group_skipped, group_name);
@@ -650,7 +660,7 @@ class MyTest {
 
  private:
   static constexpr int kDefaultTimeoutMS = 60000;
-  static constexpr const char* kCalVersion = "25.10.07";
+  static constexpr const char* kCalVersion = "25.11.22";
 
   int PrintUsage(const char* name) {
     // clang-format off
@@ -662,6 +672,7 @@ class MyTest {
       << "  -t TIMEOUT    : Set the timeout value in milliseconds (default: " << timeout_ << ")\n"
       << "  -c            : Disable color output\n"
       << "  -f            : Force mode, run all tests, including skipped ones\n"
+      << "  -j            : Job mode, run all tests in separate processes\n"
       << "  -s            : Silent mode (suppress stdout and stderr output)\n"
       << "  -r [FILE]     : Write report via registered reporter (optional FILE)\n"
       << "  -h, --help    : Show this help message\n\n"
@@ -672,6 +683,7 @@ class MyTest {
 
   int timeout_ = kDefaultTimeoutMS;
   bool force_ = false;
+  bool job_isolation_ = false;
   bool silent_ = false;
   bool condition_passed_ = true;
   bool expect_failure_ = false;

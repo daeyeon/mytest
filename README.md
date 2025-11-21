@@ -88,6 +88,7 @@ Options:
   -t TIMEOUT    : Set the timeout value in milliseconds (default: 60000)
   -c            : Disable color output
   -f            : Force mode, run all tests, including skipped ones
+  -j            : Job mode, run all tests in separate processes
   -s            : Silent mode (suppress stdout and stderr output)
   -r [FILE]     : Write report via registered reporter (optional FILE)
   -h, --help    : Show this help message
