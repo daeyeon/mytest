@@ -23,8 +23,8 @@ TEST(TestSuite1Job, SyncTestFailure) {
 
 TEST(TestSuite1Job, SyncTestTimeout, 1000) {
   TEST_EXPECT_FAILURE();
-  std::this_thread::sleep_for(std::chrono::seconds(2));
   f_job->count++;
+  std::this_thread::sleep_for(std::chrono::seconds(2));
 }
 
 TEST0(TestSuite1Job, SyncTestOnCurrentThread) {
@@ -94,6 +94,4 @@ TEST_AFTER(TestSuite1Job) {
   EXPECT_EQ(f_job->skip, 1);
   EXPECT_EQ(f_job->expect, 1);
   EXPECT_EQ(f_job->count, 4);
-
-  f_job.Remove();
 }

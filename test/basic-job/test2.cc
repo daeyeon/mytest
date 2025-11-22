@@ -17,6 +17,7 @@ TEST(TestSuite2Job, SyncTestFailure) {
   b_job->count++;
 }
 
+/*--- per-test hooks ---------------------------------------------------*/
 TEST_BEFORE_EACH(TestSuite2Job) {
   std::cout << "Before: each TestSuite2Job test" << std::endl;
   b_job->before_each++;
@@ -27,8 +28,10 @@ TEST_AFTER_EACH(TestSuite2Job) {
   b_job->after_each++;
 }
 
+/*--- suite hooks ------------------------------------------------------*/
 TEST_BEFORE(TestSuite2Job) {
   if (!MyTest::Instance().IsJobIsolated()) { TEST_SKIP(); }
+  f_job.Create();
   b_job.Create();
   std::cout << "\nRuns  : once before all TestSuite2Job tests" << std::endl;
   b_job->before++;
@@ -38,6 +41,7 @@ TEST_AFTER(TestSuite2Job) {
   std::cout << "Runs  : once after all TestSuite2Job tests\n" << std::endl;
   b_job->after++;
 
+  // Verify f_job state (accumulated from TestSuite1Job)
   EXPECT_EQ(f_job->before, 1);
   EXPECT_EQ(f_job->after, 1);
   EXPECT_EQ(f_job->before_each, 8);
@@ -46,6 +50,7 @@ TEST_AFTER(TestSuite2Job) {
   EXPECT_EQ(f_job->expect, 1);
   EXPECT_EQ(f_job->count, 4);
 
+  // Verify b_job state (accumulated from TestSuite2Job)
   EXPECT_EQ(b_job->before, 1);
   EXPECT_EQ(b_job->after, 1);
   EXPECT_EQ(b_job->before_each, 2);
@@ -54,5 +59,6 @@ TEST_AFTER(TestSuite2Job) {
   EXPECT_EQ(b_job->expect, 1);
   EXPECT_EQ(b_job->count, 1);
 
+  f_job.Remove();
   b_job.Remove();
 }
