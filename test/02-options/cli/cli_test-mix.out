@@ -1,0 +1,31 @@
+[==========] Running 5 test case(s).
+[ RUN      ] MixedIsolation
+[ RUN      ] MixedIsolation:1 (PID: 27729)
+[       OK ] MixedIsolation:1
+[ RUN      ] MixedIsolation:2
+
+   Skipped : Expected skipped.
+[  SKIPPED ] MixedIsolation:2
+[ RUN      ] MixedIsolation:3 (PID: 27729)
+
+ASSERT_EQ failed (basic2.cc:42)
+  Expected : (true == global_flag)
+    Actual : (1 == 0)
+    Passed : Expected fail and failed.
+[       OK ] MixedIsolation:3
+[ RUN      ] MixedIsolation:4
+
+EXPECT_EQ failed (basic2.cc:48)
+  Expected : (100 == global_counter)
+    Actual : (100 == 0)
+    Passed : Expected fail and failed.
+[       OK ] MixedIsolation:4
+[ RUN      ] MixedIsolation:TimeoutTest (PID: 27729)
+
+ Timed out : MixedIsolation:TimeoutTest (basic2.cc:53)
+    Passed : Expected fail and failed.
+[       OK ] MixedIsolation:TimeoutTest
+[       OK ] MixedIsolation
+[==========] 5 test case(s) ran.
+[  PASSED  ] 4 test(s)
+[  SKIPPED ] 1 test(s)

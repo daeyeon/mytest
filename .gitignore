@@ -1,2 +1,5 @@
-.vscode/
-out/
+/.vscode/
+/out/
+/Testing/
+
+*.out.actual

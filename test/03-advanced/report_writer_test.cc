@@ -1,3 +1,4 @@
+#define MYTEST_CONFIG_USE_MAIN
 #include <mytest.h>
 #include <mytest_report.h>
 

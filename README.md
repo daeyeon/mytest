@@ -4,7 +4,7 @@ Lean, hassle-free testing utility, my way.
 
 ## Features
 
-- Synchronous, asynchronous, and process-isolated test support
+- Synchronous and process-isolated test support
 - Timeout support for potentially hanging tests
 - Lifecycle hooks with skip/exclude controls
 - Pluggable reporting (e.g., gtest XML) and CLI configuration
@@ -22,22 +22,19 @@ Lean, hassle-free testing utility, my way.
 ```cpp
 #include "mytest.h"
 
-TEST(TestSuite, SyncTest) {
+TEST(TestSuite, Basic) { // default timeout: 60000ms
   ASSERT_EQ(1, 1);
 }
 
-TEST_ASYNC(TestSuite, ASyncTest) {
-  std::async(std::launch::async, [&done]() {
-    EXPECT_EQ(1, 1);
-    done(); // Call `done()` passed as a parameter when async completes.
-  }).get();
+TEST(TestSuite, Timeout, 1000) {  // timeout: 1000ms
+  TEST_EXPECT_FAILURE();
+  std::this_thread::sleep_for(std::chrono::seconds(2));
+  EXPECT_EQ(1, 0);
 }
 
-TEST(TestSuite, SyncTestTimeout, 1000) { // Set timeout (optional), 1000ms
-  TEST_EXPECT_FAILURE();
-  // This test is expected to fail by exceeding the 1000ms timeout.
-  std::this_thread::sleep_for(std::chrono::seconds(2));
-  ASSERT_EQ(1, 0);
+TEST_ISOLATE(TestSuite, SegfaultIsolated) {
+  int* p = nullptr;
+  *p = 1; // Intentional crash in a spawned process
 }
 
 int main(int argc, char* argv[]) {
@@ -45,7 +42,7 @@ int main(int argc, char* argv[]) {
 }
 ```
 
-For more usage examples, see [example.cc](example.cc) and [mytest.h](mytest.h).
+For more usage examples, see [example.cc](test/00-example/example.cc) and [mytest.h](include/mytest.h).
 
 ### Running Tests
 
@@ -54,25 +51,29 @@ For more usage examples, see [example.cc](example.cc) and [mytest.h](mytest.h).
 
 [==========] Running 3 test case(s).
 [ RUN      ] TestSuite
-[ RUN      ] TestSuite:SyncTest
-[       OK ] TestSuite:SyncTest
-[ RUN      ] TestSuite:ASyncTest
-[       OK ] TestSuite:ASyncTest
-[ RUN      ] TestSuite:SyncTestTimeout
+[ RUN      ] TestSuite:Basic
+[       OK ] TestSuite:Basic
+[ RUN      ] TestSuite:Timeout
 
- Timed out : TestSuite:SyncTestTimeout
+ Timed out : TestSuite:Timeout
     Passed : Expected fail and failed.
-[       OK ] TestSuite:SyncTestTimeout
-[       OK ] TestSuite
+[       OK ] TestSuite:Timeout
+[ RUN      ] TestSuite:SegfaultIsolated (PID: 16502)
+
+Terminated by signal 11 (Segmentation fault)
+
+[  FAILED  ] TestSuite:SegfaultIsolated
+[  FAILED  ] TestSuite
 [==========] 3 test case(s) ran.
-[  PASSED  ] 3 test(s)
+[  PASSED  ] 2 test(s)
+[  FAILED  ] 1 test(s)
 ```
 
 ### Example
 
 ```shell
 cmake -B out && make -C out
-out/example.x -s
+out/example.x
 ```
 
 ### Command-line options

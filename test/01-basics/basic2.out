@@ -1,0 +1,50 @@
+[==========] Running 5 test case(s).
+[ RUN      ] MixedIsolation
+MixedIsolation/BEFORE
+[ RUN      ] MixedIsolation:1 (PID: 27509)
+MixedIsolation:1/BEFORE
+MixedIsolation:1/BEFORE_EACH
+MixedIsolation:1/TEST
+MixedIsolation:1/AFTER_EACH
+MixedIsolation:1/AFTER
+[       OK ] MixedIsolation:1
+[ RUN      ] MixedIsolation:2
+MixedIsolation:2/BEFORE_EACH
+MixedIsolation:2/TEST
+
+   Skipped : Expected skipped.
+MixedIsolation:2/AFTER_EACH
+[  SKIPPED ] MixedIsolation:2
+[ RUN      ] MixedIsolation:3 (PID: 27509)
+MixedIsolation:3/BEFORE
+MixedIsolation:3/BEFORE_EACH
+MixedIsolation:3/TEST
+
+ASSERT_EQ failed (basic2.cc:42)
+  Expected : (true == global_flag)
+    Actual : (1 == 0)
+    Passed : Expected fail and failed.
+[       OK ] MixedIsolation:3
+[ RUN      ] MixedIsolation:4
+MixedIsolation:4/BEFORE_EACH
+MixedIsolation:4/TEST
+
+EXPECT_EQ failed (basic2.cc:48)
+  Expected : (100 == global_counter)
+    Actual : (100 == 0)
+    Passed : Expected fail and failed.
+MixedIsolation:4/AFTER_EACH
+[       OK ] MixedIsolation:4
+[ RUN      ] MixedIsolation:TimeoutTest (PID: 27509)
+MixedIsolation:TimeoutTest/BEFORE
+MixedIsolation:TimeoutTest/BEFORE_EACH
+MixedIsolation:TimeoutTest/TEST
+
+ Timed out : MixedIsolation:TimeoutTest (basic2.cc:53)
+    Passed : Expected fail and failed.
+[       OK ] MixedIsolation:TimeoutTest
+MixedIsolation/AFTER
+[       OK ] MixedIsolation
+[==========] 5 test case(s) ran.
+[  PASSED  ] 4 test(s)
+[  SKIPPED ] 1 test(s)

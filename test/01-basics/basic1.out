@@ -1,0 +1,50 @@
+[==========] Running 5 test case(s).
+[ RUN      ] Isolation
+[ RUN      ] Isolation:1 (PID: 27503)
+Isolation:1/BEFORE
+Isolation:1/BEFORE_EACH
+Isolation:1/TEST
+Isolation:1/AFTER_EACH
+Isolation:1/AFTER
+[       OK ] Isolation:1
+[ RUN      ] Isolation:2 (PID: 27503)
+Isolation:2/BEFORE
+Isolation:2/BEFORE_EACH
+Isolation:2/TEST
+
+   Skipped : Expected skipped.
+[  SKIPPED ] Isolation:2
+[ RUN      ] Isolation:3 (PID: 27503)
+Isolation:3/BEFORE
+Isolation:3/BEFORE_EACH
+Isolation:3/TEST
+
+ASSERT_EQ failed (basic1.cc:44)
+  Expected : (true == global_flag)
+    Actual : (1 == 0)
+    Passed : Expected fail and failed.
+[       OK ] Isolation:3
+[ RUN      ] Isolation:4 (PID: 27503)
+Isolation:4/BEFORE
+Isolation:4/BEFORE_EACH
+Isolation:4/TEST
+
+EXPECT_EQ failed (basic1.cc:50)
+  Expected : (100 == global_counter)
+    Actual : (100 == 0)
+Isolation:4/AFTER_EACH
+Isolation:4/AFTER
+    Passed : Expected fail and failed.
+[       OK ] Isolation:4
+[ RUN      ] Isolation:TimeoutTest (PID: 27503)
+Isolation:TimeoutTest/BEFORE
+Isolation:TimeoutTest/BEFORE_EACH
+Isolation:TimeoutTest/TEST
+
+ Timed out : Isolation:TimeoutTest (basic1.cc:55)
+    Passed : Expected fail and failed.
+[       OK ] Isolation:TimeoutTest
+[       OK ] Isolation
+[==========] 5 test case(s) ran.
+[  PASSED  ] 4 test(s)
+[  SKIPPED ] 1 test(s)

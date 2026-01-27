@@ -1,0 +1,31 @@
+[==========] Running 5 test case(s).
+[ RUN      ] Basic
+[ RUN      ] Basic:1
+[       OK ] Basic:1
+[ RUN      ] Basic:2
+
+   Skipped : Expected skipped.
+[  SKIPPED ] Basic:2
+[ RUN      ] Basic:3
+
+ASSERT_EQ failed (basic.cc:43)
+  Expected : (true == global_flag)
+    Actual : (1 == 0)
+    Passed : Expected fail and failed.
+[       OK ] Basic:3
+[ RUN      ] Basic:4
+
+EXPECT_EQ failed (basic.cc:49)
+  Expected : (100 == global_counter)
+    Actual : (100 == 0)
+    Passed : Expected fail and failed.
+[       OK ] Basic:4
+[ RUN      ] Basic:TimeoutTest
+
+ Timed out : Basic:TimeoutTest (basic.cc:54)
+    Passed : Expected fail and failed.
+[       OK ] Basic:TimeoutTest
+[       OK ] Basic
+[==========] 5 test case(s) ran.
+[  PASSED  ] 4 test(s)
+[  SKIPPED ] 1 test(s)

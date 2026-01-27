@@ -1,3 +1,27 @@
+/*
+ * MyTest Reporter - Custom reporter implementation for MyTest.
+ * Copyright 2024-present Daeyeon Jeong (daeyeon.dev@gmail.com)
+ *
+ * Licensed under the Apache License, Version 2.0.
+ * See http://www.apache.org/licenses/LICENSE-2.0 for details.
+ */
+
+/*
+  Usage:
+
+  #include <mytest.h>
+  #include <mytest_report.h>
+
+  int main(int argc, char* argv[]) {
+    SET_REPORTER(mytest::GTestXmlReporter);
+    return RUN_ALL_TESTS(argc, argv);
+  }
+
+  Command Line:
+   ./your_test -r            // Generate report.xml
+   ./your_test -r custom.xml // Generate custom.xml
+*/
+
 #pragma once
 
 #include "mytest.h"

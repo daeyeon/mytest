@@ -1,5 +1,5 @@
 #include <mytest.h>
-#include "fixture.h"
+#include "../fixture.h"
 
 extern Fixture f;
 Fixture b;
@@ -28,7 +28,7 @@ TEST_AFTER_EACH(TestSuite2) {
 }
 
 TEST_BEFORE(TestSuite2) {
-  if (MyTest::Instance().IsJobIsolated()) { TEST_SKIP(); }
+  if (!IS_MAIN_PROCESS()) { TEST_SKIP(); }
   std::cout << "\nRuns  : once before all TestSuite2 tests" << std::endl;
   b.before++;
 }
@@ -37,7 +37,7 @@ TEST_AFTER(TestSuite2) {
   std::cout << "Runs  : once after all TestSuite2 tests\n" << std::endl;
   b.after++;
 
-  if (MyTest::Instance().IsJobIsolated()) return;
+  if (!IS_MAIN_PROCESS()) return;
 
   EXPECT_EQ(f.before, 1);
   EXPECT_EQ(f.after, 1);
@@ -45,7 +45,7 @@ TEST_AFTER(TestSuite2) {
   EXPECT_EQ(f.after_each, 8);
   EXPECT_EQ(f.skip, 1);
   EXPECT_EQ(f.expect, 1);
-  EXPECT_EQ(f.count, 4);
+  EXPECT_EQ(f.count, 3);
 
   EXPECT_EQ(b.before, 1);
   EXPECT_EQ(b.after, 1);

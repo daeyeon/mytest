@@ -1,0 +1,21 @@
+[==========] Running 5 test case(s).
+[ RUN      ] Process
+[ RUN      ] Process:CwdIsolationVerification (PID: 27536)
+[       OK ] Process:CwdIsolationVerification
+[ RUN      ] Process:IncrementCounterInChild (PID: 27536)
+[       OK ] Process:IncrementCounterInChild
+[ RUN      ] Process:SkipInChild (PID: 27536)
+
+   Skipped : Expected skipped.
+[  SKIPPED ] Process:SkipInChild
+[ RUN      ] Process:TimeoutInChild (PID: 27536)
+
+ Timed out : Process:TimeoutInChild (basic3.cc:25)
+    Passed : Expected fail and failed.
+[       OK ] Process:TimeoutInChild
+[ RUN      ] Process:CounterIsolation (PID: 27536)
+[       OK ] Process:CounterIsolation
+[       OK ] Process
+[==========] 5 test case(s) ran.
+[  PASSED  ] 4 test(s)
+[  SKIPPED ] 1 test(s)
