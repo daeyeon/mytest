@@ -195,6 +195,7 @@ class MyTest {
   void MarkExpectFailure(bool value) { expect_failure_ = value; }
   void AddExcludePattern(const std::string& pattern) { exclude_patterns_.emplace_back(pattern); }
   void RegisterProcessTest(const std::string& name) { process_tests_.insert(name); }
+  void RegisterPostTestTask(std::function<void()> task) { post_test_tasks_.push_back(std::move(task)); }
   void SetReporter(std::shared_ptr<mytest::Reporter> reporter) { reporter_ = std::move(reporter); }
   static std::optional<int> MakeTimeout() { return std::nullopt; }
   template <typename T>
@@ -403,6 +404,7 @@ class MyTest {
 
       bool should_call_after_hook = false;
       auto [failure, skipped, message] = HookCaller([&]() {
+        auto post_task_runner = OnScopeLeave::create([this]() { RunPostTestTask(); });
         CallHook(test_before_each_);
         should_call_after_hook = true;
         test();
@@ -595,7 +597,10 @@ class MyTest {
         SilenceOutput(silent_);
         CallHook(test_before_);
         CallHook(test_before_each_);
-        test();
+        {
+          auto post_runner = OnScopeLeave::create([this]() { RunPostTestTask(); });
+          test();
+        }
         failure = !condition_passed_;
         CallHook(test_after_each_);
         CallHook(test_after_);
@@ -793,8 +798,8 @@ class MyTest {
   static constexpr const char* kCalVersion = "26.01.31";
   inline static std::string current_test_name_;
 
+  // clang-format off
   int PrintUsage(const char* name) {
-    // clang-format off
     std::cout
       << "Usage: " << name << " [options]\n"
       << "Options:\n"
@@ -812,6 +817,9 @@ class MyTest {
     return 0;
   }
 
+  void RunPostTestTask() { for (const auto& task : post_test_tasks_) task(); post_test_tasks_.clear(); }
+  // clang-format on
+
   int timeout_{kDefaultTimeoutMS};
   bool force_{false};
   bool job_isolation_{false};
@@ -825,6 +833,7 @@ class MyTest {
   std::unordered_set<std::string> process_tests_;
   std::unordered_map<std::string, int> test_timeouts_;
   std::unordered_map<std::string, std::string> locations_;
+  std::vector<std::function<void()>> post_test_tasks_;
   std::vector<TestResult> test_results_;
   std::vector<std::string> result_details_;
   std::shared_ptr<mytest::Reporter> reporter_;
