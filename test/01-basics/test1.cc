@@ -1,16 +1,3 @@
-/*
- * 01-basics/test1.cc
- *
- * This file demonstrates:
- * - Basic test macros: TEST, TEST_ASYNC, TEST0
- * - Timeout handling with millisecond precision
- * - TEST_SKIP() and TEST_EXPECT_FAILURE() usage
- * - All lifecycle hooks: BEFORE, AFTER, BEFORE_EACH, AFTER_EACH
- * - Thread isolation validation (tests run on separate threads)
- * - Local fixture pattern for sharing state between tests
- */
-
-#define MYTEST_CONFIG_USE_MAIN
 #include <mytest.h>
 #include <future>
 #include <thread>
@@ -85,7 +72,7 @@ TEST_AFTER_EACH(TestSuite1) {
 }
 
 TEST_BEFORE(TestSuite1) {
-  if (!IS_MAIN_PROCESS()) { TEST_SKIP(); }
+  if (!MyTest::IsMainProcess()) { TEST_SKIP(); }
   std::cout << "\nRuns  : once before all TestSuite1 tests" << std::endl;
   f.before++;
   f.main_thread_id = std::this_thread::get_id();

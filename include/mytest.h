@@ -10,22 +10,19 @@
 
 #include <fcntl.h>
 #include <limits.h>
-#include <setjmp.h>  // sigsetjmp, siglongjmp
+#include <setjmp.h>
 #include <spawn.h>
-#include <sys/time.h>  // setitimer
+#include <sys/time.h>
 #include <sys/types.h>
 #include <sys/wait.h>
-#include <unistd.h>  // dup, dup2, fileno, close
-#ifdef __APPLE__
-#include <mach-o/dyld.h>  // _NSGetExecutablePath
-#endif
+#include <unistd.h>
+#include <atomic>
 #include <cerrno>
 #include <chrono>
 #include <csignal>
 #include <cstdlib>
 #include <cstring>
 #include <functional>
-#include <future>
 #include <iostream>
 #include <memory>
 #include <optional>
@@ -38,6 +35,9 @@
 #include <unordered_set>
 #include <utility>
 #include <vector>
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#endif
 
 /*
   Usage:
@@ -106,8 +106,7 @@ struct Options {
 class Reporter {
  public:
   virtual ~Reporter() = default;
-  virtual void OnComplete(const std::vector<TestResult>& results,
-                          const Summary& summary,
+  virtual void OnComplete(const std::vector<TestResult>& results, const Summary& summary,
                           const Options& options) = 0;
 };
 }  // namespace mytest
@@ -128,13 +127,13 @@ class MyTest {
   class TestSkipException : public std::runtime_error {
    public:
     explicit TestSkipException(const std::string& message = "Expected skipped.")
-        : std::runtime_error("   Skipped : " + message) {}
+        : std::runtime_error("Skipped : " + message) {}
   };
 
   class TestTimeoutException : public std::runtime_error {
    public:
     explicit TestTimeoutException(const std::string& message)
-        : std::runtime_error(" Timed out : " + message) {}
+        : std::runtime_error("Timed out : " + message) {}
   };
 
   class TestAssertException : public std::runtime_error {
@@ -144,43 +143,32 @@ class MyTest {
 
   void PrintCheckResult(const std::string& message) {
     if (silent_) SilenceOutput(false);
-    std::cout << std::endl
-              << colors(expect_failure_ ? RESET : RED) << message << colors(RESET) << std::endl;
+    std::cout << "\n" << colors(expect_failure_ ? RESET : RED) << message << colors(RESET) << "\n";
     if (silent_) SilenceOutput(true);
     result_details_.push_back(message);
   }
 
-#if !defined(UNUSED) && defined(__GNUC__)
-#define UNUSED __attribute__((unused))
-#else
-#define UNUSED
-#endif
-
   void SilenceOutput(bool silent) {
-    static int stdout_backup = -1, stderr_backup = -1;
+    static int backups[2] = {-1, -1};
+    FILE* streams[2] = {stdout, stderr};
     if (silent) {
-      if (stdout_backup != -1) return;  // Already silenced
-      fflush(stdout);
-      fflush(stderr);
-      stdout_backup = dup(fileno(stdout));
-      stderr_backup = dup(fileno(stderr));
-      UNUSED FILE* fp1 = freopen("/dev/null", "w", stdout);
-      UNUSED FILE* fp2 = freopen("/dev/null", "w", stderr);
-    } else {
-      if (stdout_backup == -1) return;  // Already not silenced
-      if (stdout_backup != -1) {
-        fflush(stdout);
-        dup2(stdout_backup, fileno(stdout));
-        close(stdout_backup);
-        stdout_backup = -1;
-      }
-      if (stderr_backup != -1) {
-        fflush(stderr);
-        dup2(stderr_backup, fileno(stderr));
-        close(stderr_backup);
-        stderr_backup = -1;
-      }
+      if (backups[0] != -1) return;
       std::cout.flush();
+      for (int i : {0, 1}) {
+        fflush(streams[i]);
+        backups[i] = dup(fileno(streams[i]));
+        std::ignore = freopen("/dev/null", "w", streams[i]);
+      }
+    } else {
+      if (backups[0] == -1) return;
+      std::cout.flush();
+      for (int i : {0, 1}) {
+        fflush(streams[i]);
+        dup2(backups[i], fileno(streams[i]));
+        close(backups[i]);
+        backups[i] = -1;
+      }
+      std::cout.clear();
     }
   }
 
@@ -198,24 +186,17 @@ class MyTest {
   void RegisterPostTestTask(std::function<void()> task) { post_test_tasks_.push_back(std::move(task)); }
   void SetReporter(std::shared_ptr<mytest::Reporter> reporter) { reporter_ = std::move(reporter); }
   static std::optional<int> MakeTimeout() { return std::nullopt; }
-  template <typename T>
-  static std::optional<int> MakeTimeout(T value) { return std::optional<int>{static_cast<int>(value)}; }
-  static bool IsMainProcess() {
-    static const pid_t cached_main_pid = []() { if (const char* env_pid = getenv(MyTest::kMainPidEnv)) { return static_cast<pid_t>(std::strtol(env_pid, nullptr, 10)); } return getpid(); }();
-    return getpid() == cached_main_pid;
-  }
+  template <typename T> static std::optional<int> MakeTimeout(T value) { return std::optional<int>{static_cast<int>(value)}; }
+  static bool IsMainProcess() { static const pid_t cached_main_pid = []() { if (const char* env_pid = getenv(MyTest::kMainPidEnv)) { return static_cast<pid_t>(std::strtol(env_pid, nullptr, 10)); } return getpid(); }(); return getpid() == cached_main_pid; }
   static const char* GetCurrentTestName() { return current_test_name_.c_str(); }
   bool ShouldRunInProcess(const std::string& name) const { return process_tests_.count(name) > 0; }
   bool IsIsolated(std::optional<std::string> maybe_name = std::nullopt) const { return job_isolation_ || (maybe_name ? ShouldRunInProcess(*maybe_name) : false); }
   int GetTestTimeout(const std::string& name) const { auto it = test_timeouts_.find(name); return it != test_timeouts_.end() ? it->second : timeout_; }
   static bool GetExecutablePath(char* path, size_t size) {
 #ifdef __APPLE__
-    char resolved[PATH_MAX];
-    uint32_t bufsize = static_cast<uint32_t>(size);
-    return _NSGetExecutablePath(path, &bufsize) == 0 && realpath(path, resolved) && (strncpy(path, resolved, size - 1), path[size - 1] = '\0', true);
+    char resolved[PATH_MAX]; uint32_t bufsize = static_cast<uint32_t>(size); return _NSGetExecutablePath(path, &bufsize) == 0 && realpath(path, resolved) && snprintf(path, size, "%s", resolved) > 0;
 #else
-    ssize_t len = readlink("/proc/self/exe", path, size - 1);
-    return len > 0 && (path[len] = '\0', true);
+    ssize_t len = readlink("/proc/self/exe", path, size - 1); return len > 0 && (path[len] = '\0', true);
 #endif
   }
   // clang-format on
@@ -231,23 +212,15 @@ class MyTest {
     setbuf(stderr, nullptr);
 
     if (getenv(kMainPidEnv) == nullptr) {
-      const std::string main_pid = std::to_string(getpid());
-      setenv(kMainPidEnv, main_pid.c_str(), 1);
+      setenv(kMainPidEnv, std::to_string(getpid()).c_str(), 1);
       char cwd_buf[PATH_MAX];
-      if (getcwd(cwd_buf, sizeof(cwd_buf)) != nullptr) {
-        setenv(kInitialCwdEnv, cwd_buf, 1);
-      }
+      if (getcwd(cwd_buf, sizeof(cwd_buf))) setenv(kInitialCwdEnv, cwd_buf, 1);
     }
 
     bool is_spawned = (getenv(kSpawnedEnv) != nullptr);
-    if (is_spawned) {  // Restore the test environment if spawned.
+    if (is_spawned) {
       unsetenv(kSpawnedEnv);
-      const char* initial_cwd = getenv(kInitialCwdEnv);
-      if (initial_cwd != nullptr) {
-        if (chdir(initial_cwd) != 0) {
-          // This will likely cause the test to fail, which is intended.
-        }
-      }
+      if (const char* cwd_env = getenv(kInitialCwdEnv)) { std::ignore = chdir(cwd_env); }
     }
     std::vector<std::regex> include_patterns;
     bool use_report = false;
@@ -256,55 +229,42 @@ class MyTest {
 
     // Parse CLI arguments
     for (int i = 1; i < argc; ++i) {
-      std::string arg = argv[i];
       // clang-format off
-      if (arg == "-p" && i + 1 < argc) {
-        std::string pattern = argv[++i];
+      std::string arg = argv[i], next = (i + 1 < argc) ? argv[i + 1] : "";
+      auto consume_next = [&]() { i++; return next; };
+      if (arg == "-p" && !next.empty()) {
         try {
-          (pattern[0] == '-') ? exclude_patterns_.emplace_back(pattern.substr(1)) : include_patterns.emplace_back(pattern);
-        } catch (const std::exception& e) {
-          std::cerr << e.what() << std::endl;
-          return 1;
-        }
-      } else if (arg == "-t" && i + 1 < argc) { timeout_ = std::stoi(argv[++i]);
-      } else if (arg == "-c") { use_color_ = false;
-      } else if (arg == "-s") { silent_ = true;
-      } else if (arg == "-f") { force_ = true;
-      } else if (arg == "-j") { job_isolation_ = true;
-      } else if (arg == "-r") {
-        if (reporter_ == nullptr) {
-          std::cerr << "Report requested but no report writer registered." << std::endl;
-          return 1;
-        }
+          std::string p = consume_next();
+          (p[0] == '-' ? exclude_patterns_ : include_patterns).emplace_back(p[0] == '-' ? p.substr(1) : p);
+        } catch (const std::exception& e) { std::cerr << e.what() << std::endl; return 1; }
+      }
+      else if (arg == "-t" && !next.empty()) timeout_ = std::stoi(consume_next());
+      else if (arg == "-c") use_color_ = false;
+      else if (arg == "-s") silent_ = true;
+      else if (arg == "-f") force_ = true;
+      else if (arg == "-j") job_isolation_ = true;
+      else if (arg == "-r") {
+        if (!reporter_) { std::cerr << "No reporter registered.\n"; return 1; }
         use_report = true;
-        if (i + 1 < argc && argv[i + 1][0] != '-') {
-          report_output_path = argv[++i];
-        } else {
-          report_output_path.clear();
-        }
-      } else if (arg == "-h" || arg == "--help") { return PrintUsage(argv[0]); }
+        report_output_path = (!next.empty() && next[0] != '-') ? consume_next() : "";
+      }
+      else if (arg == "-h" || arg == "--help") return PrintUsage(argv[0]);
       // clang-format on
     }
 
-    auto should_run = [this, &include_patterns](const std::string& name) {
-      for (const auto& pattern : exclude_patterns_) {
-        if (std::regex_search(name, pattern)) return false;
-      }
-      if (include_patterns.empty()) return true;
-      for (const auto& pattern : include_patterns) {
-        if (std::regex_search(name, pattern)) return true;
-      }
-      return false;
+    auto IsTestSelected = [this, &include_patterns](const std::string& name) {
+      auto matches = [&](const auto& p) { return std::regex_search(name, p); };
+      if (std::any_of(exclude_patterns_.begin(), exclude_patterns_.end(), matches)) return false;
+      return include_patterns.empty() ||
+             std::any_of(include_patterns.begin(), include_patterns.end(), matches);
     };
 
     // Run tests
     int num_success = 0, num_failure = 0, num_skipped = 0;
     int num_ran_tests = 0, num_filtered_tests = 0;
 
-    colors_ = {use_color_ ? "\033[0m" : "",
-               use_color_ ? "\033[32m" : "",
-               use_color_ ? "\033[31m" : "",
-               use_color_ ? "\033[33m" : ""};
+    colors_ = {use_color_ ? "\033[0m" : "", use_color_ ? "\033[32m" : "",
+               use_color_ ? "\033[31m" : "", use_color_ ? "\033[33m" : ""};
     const char** colors = colors_.data();
 
     // Categorize tests while preserving registration order of groups.
@@ -313,8 +273,7 @@ class MyTest {
     std::vector<std::string> group_order;
     for (const auto& test_pair : tests_) {
       const std::string& name = test_pair.first;
-      if (!should_run(name)) continue;
-
+      if (!IsTestSelected(name)) continue;
       num_filtered_tests++;
       auto group_name = name.substr(0, name.find(':'));
       if (!categorized_tests.count(group_name)) group_order.push_back(group_name);
@@ -323,9 +282,7 @@ class MyTest {
     }
 
     // clang-format off
-    if (!is_spawned) {
-      printf("%s[==========]%s Running %d test case(s).\n", colors[GREEN], colors[RESET], num_filtered_tests);
-    }
+    if (!is_spawned)     printf("%s[==========]%s Running %d test case(s).\n", colors[GREEN], colors[RESET], num_filtered_tests);
     auto PrintStart = [&colors, this](const std::string& name) {
                          printf("%s[ RUN      ]%s %s", colors[GREEN], colors[RESET], name.c_str());
                          if (IsIsolated(name)) printf(" (PID: %d)", getpid());
@@ -349,9 +306,11 @@ class MyTest {
       return std::regex_replace(s, std::regex("\x1B\\[[0-9;]*[mK]"), "")  // Strips ANSI codes
           .erase(0, s.find_first_not_of(" \t\n\r"));
     };
-
-    auto HookCaller = [this,
-                       &colors](std::function<void()> func) -> std::tuple<bool, bool, std::string> {
+    auto RunHook = [this](const auto& hooks, const std::string& name) {
+      if (!name.empty() && hooks.count(name)) hooks.at(name)();
+    };
+    auto ResultOf = [this,
+                     &colors](std::function<void()> test) -> std::tuple<bool, bool, std::string> {
       std::string message;
       bool failure = false, skipped = false;
       condition_passed_ = true, expect_failure_ = false;  // reset
@@ -362,17 +321,17 @@ class MyTest {
           SilenceOutput(false);
         });
         SilenceOutput(silent_);
-        func();
+        test();
       } catch (const TestSkipException& e) {
         skipped = true, message = e.what();
-        printf("\n%s\n", e.what());
+        printf("\n   %s\n", e.what());
       } catch (const TestAssertException& e) {
         failure = true, message = e.what();
-        // the failure message is already printed in PrintTestResult.
+        // the failure message is already printed.
       } catch (const TestTimeoutException& e) {
         failure = true, message = e.what();
         if (locations_.count(current_test_name_)) message += " " + locations_[current_test_name_];
-        printf("\n%s\n", message.c_str());
+        printf("\n %s\n", message.c_str());
       } catch (const std::exception& e) {
         failure = true, message = e.what();
         if (locations_.count(current_test_name_)) message += " " + locations_[current_test_name_];
@@ -393,25 +352,20 @@ class MyTest {
       return {failure, skipped, message};
     };
 
-    auto NormalTestExecutor = [this, &colors, &HookCaller](
-                                  const std::string& name,
-                                  const TestFunction& test,
+    auto NormalTestExecutor = [this, &colors, &ResultOf, &RunHook](
+                                  const std::string& name, const TestFunction& test,
                                   const std::string& group_name) -> ExecResult {
       result_details_.clear();
-      auto CallHook = [this, &group_name](const auto& hooks) {
-        if (!group_name.empty() && hooks.count(group_name)) hooks.at(group_name)();
-      };
-
       bool should_call_after_hook = false;
-      auto [failure, skipped, message] = HookCaller([&]() {
+      auto [failure, skipped, message] = ResultOf([&]() {
         auto post_task_runner = OnScopeLeave::create([this]() { RunPostTestTask(); });
-        CallHook(test_before_each_);
+        RunHook(test_before_each_, group_name);
         should_call_after_hook = true;
         test();
       });
 
       if (should_call_after_hook) {
-        auto [after_failure, _skipped, _] = HookCaller([&]() { CallHook(test_after_each_); });
+        auto [after_failure, _1, _2] = ResultOf([&]() { RunHook(test_after_each_, group_name); });
         failure = failure || after_failure;
       }
 
@@ -420,22 +374,19 @@ class MyTest {
       return {failure, skipped, message, result_details_};
     };
 
-    auto IsolatedTestExecutor = [this, &colors, &Clean](
-                                    const std::string& name,
-                                    const TestFunction& test,
+    auto ReadPipe = [](int fd, std::string& output) {
+      char buf[4096];
+      for (ssize_t n; (n = read(fd, buf, sizeof(buf))) > 0;) output.append(buf, n);
+    };
+
+    auto IsolatedTestExecutor = [this, &colors, &Clean, &ReadPipe](
+                                    const std::string& name, const TestFunction& test,
                                     const std::string group_name = "") -> ExecResult {
       char exe_path[PATH_MAX];
       if (!GetExecutablePath(exe_path, sizeof(exe_path))) {
-        return {true, false, "Failed to resolve executable path", std::vector<std::string>{}};
+        return {true, false, "Failed to resolve executable path", {}};
       }
-
-      const int process_timeout = GetTestTimeout(name);
-      int parent_timeout = process_timeout;
-      if (test_timeouts_.find(name) != test_timeouts_.end()) {
-        parent_timeout = process_timeout + 200;  // Wait 0.2s more as grace period
-      }
-
-      std::string timeout = std::to_string(process_timeout);
+      std::string timeout = std::to_string(GetTestTimeout(name));
       std::string pattern = name + "$";
       std::vector<const char*> argv_vec = {exe_path, "-p", pattern.c_str(), "-t", timeout.c_str()};
       if (!use_color_) argv_vec.push_back("-c");
@@ -443,102 +394,64 @@ class MyTest {
       if (job_isolation_) argv_vec.push_back("-j");
       argv_vec.push_back(nullptr);
 
-      // Create pipe to capture child's stdout
+      // Spawn with pipe to capture child's stdout/stderr
       int pipe_fd[2];
-      if (pipe(pipe_fd) == -1) {
-        return {true, false, "Failed to create pipe", std::vector<std::string>{}};
-      }
-
+      if (pipe(pipe_fd) == -1) return {true, false, "Failed to create pipe", {}};
       posix_spawn_file_actions_t actions;
       posix_spawn_file_actions_init(&actions);
       posix_spawn_file_actions_adddup2(&actions, pipe_fd[1], STDOUT_FILENO);
       posix_spawn_file_actions_adddup2(&actions, pipe_fd[1], STDERR_FILENO);
       posix_spawn_file_actions_addclose(&actions, pipe_fd[0]);
       posix_spawn_file_actions_addclose(&actions, pipe_fd[1]);
-
       pid_t worker_pid = -1;
       setenv(kSpawnedEnv, "1", 1);
-      int spawn_ret = posix_spawn(&worker_pid,
-                                  exe_path,
-                                  &actions,
-                                  nullptr,
-                                  const_cast<char* const*>(argv_vec.data()),
-                                  environ);
+      int spawn_ret = posix_spawn(&worker_pid, exe_path, &actions, nullptr,
+                                  const_cast<char* const*>(argv_vec.data()), environ);
       unsetenv(kSpawnedEnv);
       posix_spawn_file_actions_destroy(&actions);
-      close(pipe_fd[1]);  // Close write end in parent
-
+      close(pipe_fd[1]);  // Parent closes write end
       if (spawn_ret != 0) {
         close(pipe_fd[0]);
-        return {true, false, "Failed to spawn worker process", std::vector<std::string>{}};
+        return {true, false, "Failed to spawn worker process", {}};
       }
 
-      // Read child's output while waiting
+      // Wait and capture child's output
       std::string child_output;
-      char buf[4096];
-      int flags = fcntl(pipe_fd[0], F_GETFL, 0);
-      fcntl(pipe_fd[0], F_SETFL, flags | O_NONBLOCK);
-
+      fcntl(pipe_fd[0], F_SETFL, fcntl(pipe_fd[0], F_GETFL) | O_NONBLOCK);
       int status = 0, exit_code = -1;
-      bool sig_timed_out = false;
       auto start_time = std::chrono::steady_clock::now();
-      auto timeout_ms = std::chrono::milliseconds(parent_timeout);
-      while (true) {
-        // Read available output from pipe
-        ssize_t n;
-        while ((n = read(pipe_fd[0], buf, sizeof(buf) - 1)) > 0) {
-          buf[n] = '\0';
-          child_output += buf;
-        }
-
-        int wait_ret = waitpid(worker_pid, &status, WNOHANG);
-        if (wait_ret > 0) {
-          // Read remaining output
-          while ((n = read(pipe_fd[0], buf, sizeof(buf) - 1)) > 0) {
-            buf[n] = '\0';
-            child_output += buf;
-          }
-          if (WIFEXITED(status)) {
-            exit_code = WEXITSTATUS(status);
-          } else if (WIFSIGNALED(status)) {
-            exit_code = 128 + WTERMSIG(status);
-          }
-          break;
-        } else if (wait_ret < 0) {
-          exit_code = -1;
-          break;
-        }
-        // Check timeout
-        auto now = std::chrono::steady_clock::now();
-        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - start_time);
-        if (elapsed >= timeout_ms) {
+      auto parent_timeout = std::chrono::milliseconds(GetTestTimeout(name) + 200);
+      while (waitpid(worker_pid, &status, WNOHANG) == 0) {  // Non-blocking wait to capture pipe
+        ReadPipe(pipe_fd[0], child_output);                 // Read available output from pipe
+        if (std::chrono::steady_clock::now() - start_time > parent_timeout) {  // Check timeout
           kill(worker_pid, SIGKILL);
           waitpid(worker_pid, &status, 0);
-          sig_timed_out = true;
-          exit_code = 1;
+          exit_code = -2;  // Custom timeout code
           break;
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
       }
+      if (exit_code != -2) {
+        exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : 128 + WTERMSIG(status);
+      }
+      ReadPipe(pipe_fd[0], child_output);  // Read remaining output
       close(pipe_fd[0]);
-
-      // Print captured child output
       if (!child_output.empty()) {
-        printf("%s", child_output.c_str());
+        printf("%s", child_output.c_str());  // Print captured child output
         fflush(stdout);
       }
 
       bool failure = false, skipped = false;
       std::string message;
-      if (sig_timed_out) {
+      if (exit_code == -2) {
         failure = true;  // Signal timeout is always a failure
-        message = std::string(" Timed out : ") + name;
+        message = "Timed out : " + name;
       } else if (exit_code > 128 && exit_code < 255) {
-        failure = true;  // Signal exits: 128 + signal_number (e.g., 137 = SIGKILL)
+        failure = true;  // Signal exits: 128 + signal_number (e.g., 139 for SIGSEGV)
         int sig = exit_code - 128;
         const char* sig_name = strsignal(sig);
-        message = std::string("Terminated by signal ") + std::to_string(sig) +
-                  (sig_name ? (std::string(" (") + sig_name + ")") : "");
+        message = "Terminated by signal " + std::to_string(sig) +
+                  (sig_name ? (" (" + std::string(sig_name) + ")") : "");
         if (locations_.count(name)) message += " " + locations_[name];
         printf("\n%s%s%s\n", colors[RED], message.c_str(), colors[RESET]);
       } else if (exit_code >= 0 && exit_code < 16) {
@@ -552,9 +465,9 @@ class MyTest {
           printf("\n   Skipped : Expected skipped.\n");
         }
         if (is_timeout) {
-          message = std::string(" Timed out : ") + name;
+          message = "Timed out : " + name;
           if (locations_.count(name)) message += " " + locations_[name];
-          printf("\n%s\n", message.c_str());
+          printf("\n %s\n", message.c_str());
         }
         if (is_expect_failure) {
           if (failure) {
@@ -584,34 +497,28 @@ class MyTest {
     enum ExitFlag { SUCCESS = 0, FAILURE = 1, SKIPPED = 2, TIMEOUT = 4, EXPECT_FAILURE = 8 };
 
     auto SpawnedTestExecutor =
-        [this](const std::string& name,
-               const TestFunction& test,
-               const std::string& group_name) -> std::tuple<bool, bool, bool, bool> {
+        [this, &RunHook](const std::string& name, const TestFunction& test,
+                         const std::string& group_name) -> std::tuple<bool, bool, bool, bool> {
       condition_passed_ = true, expect_failure_ = false, current_test_name_ = name;
       bool failure = false, skipped = false, timeout = false;
-      auto CallHook = [this, &group_name](const auto& hooks) {
-        if (!group_name.empty() && hooks.count(group_name)) hooks.at(group_name)();
-      };
       try {
         auto _ = OnScopeLeave::create([&, this]() { SilenceOutput(false); });
         SilenceOutput(silent_);
-        CallHook(test_before_);
-        CallHook(test_before_each_);
+        RunHook(test_before_, group_name);
+        RunHook(test_before_each_, group_name);
         {
           auto post_runner = OnScopeLeave::create([this]() { RunPostTestTask(); });
           test();
         }
         failure = !condition_passed_;
-        CallHook(test_after_each_);
-        CallHook(test_after_);
+        RunHook(test_after_each_, group_name);
+        RunHook(test_after_, group_name);
       } catch (const TestSkipException& e) {
         skipped = true;
       } catch (const TestTimeoutException& e) {
-        failure = true, timeout = true;
-      } catch (...) {
         failure = true;
-      }
-      // Invert failure if expect_failure_ is set
+        timeout = true;
+      } catch (...) { failure = true; }
       if (expect_failure_) failure = !failure;
       return {failure, skipped, timeout, expect_failure_};
     };
@@ -619,7 +526,7 @@ class MyTest {
     if (is_spawned) {
       for (const auto& test_pair : tests_) {
         const std::string& name = test_pair.first;
-        if (!should_run(name)) continue;
+        if (!IsTestSelected(name)) continue;
         const auto group_name = name.substr(0, name.find(':'));
         auto [failure, skipped, timeout, expect_fail] =
             SpawnedTestExecutor(name, test_pair.second, group_name);
@@ -634,18 +541,12 @@ class MyTest {
     }
 
     auto TestDispatcher = [this, &NormalTestExecutor, &IsolatedTestExecutor](
-                              const std::string& name,
-                              const TestFunction& test,
+                              const std::string& name, const TestFunction& test,
                               const std::string group_name = "",
                               bool run_in_process = false) -> ExecResult {
       condition_passed_ = true, expect_failure_ = false, current_test_name_ = name;
-      auto [failure, skipped, message, details] = run_in_process
-                                                      ? IsolatedTestExecutor(name, test, group_name)
-                                                      : NormalTestExecutor(name, test, group_name);
-      while (!message.empty() && (message.back() == '\n' || message.back() == '\r')) {
-        message.pop_back();
-      }
-      return std::make_tuple(failure, skipped, message, details);
+      return run_in_process ? IsolatedTestExecutor(name, test, group_name)
+                            : NormalTestExecutor(name, test, group_name);
     };
 
     for (const auto& group_name : group_order) {
@@ -688,10 +589,6 @@ class MyTest {
                             skipped,
                             std::move(message),
                             std::move(details)};
-          while (!result.message.empty() &&
-                 (result.message.back() == '\n' || result.message.back() == '\r')) {
-            result.message.pop_back();
-          }
           test_results_.push_back(std::move(result));
         }
         group_failure = group_failure || failure;
@@ -719,7 +616,7 @@ class MyTest {
         if (!r.failure) continue;
         printf(" - %s:%s\n", r.suite.c_str(), r.name.c_str());
         for (const auto& f : r.details) printf("  - %.*s\n", (int)f.find('\n'), f.c_str());
-        if (r.details.empty() && !r.message.empty()) printf("   - %s\n", Clean(r.message).c_str());
+        if (r.details.empty() && !r.message.empty()) printf("  - %s\n", Clean(r.message).c_str());
       }
     }
     if (reporter_ && use_report) {
@@ -731,12 +628,6 @@ class MyTest {
     return num_failure > 0 ? 1 : 0;
   }
 
-#if !defined(WARN_UNUSED_RESULT) && defined(__GNUC__)
-#define WARN_UNUSED_RESULT __attribute__((__warn_unused_result__))
-#else
-#define WARN_UNUSED_RESULT
-#endif
-
   class OnScopeLeave {
    public:
     // clang-format off
@@ -746,7 +637,7 @@ class MyTest {
     explicit OnScopeLeave(Function&& function) : function_(std::move(function)) {}
     OnScopeLeave(OnScopeLeave&& other) : function_(std::move(other.function_)) { other.function_ = nullptr; }
     ~OnScopeLeave() { if (function_) function_(); }
-    static WARN_UNUSED_RESULT OnScopeLeave create(Function&& function) { return OnScopeLeave(std::move(function)); }
+    [[nodiscard]] static OnScopeLeave create(Function&& function) { return OnScopeLeave(std::move(function)); }
     // clang-format on
    private:
     Function function_;
@@ -754,40 +645,45 @@ class MyTest {
 
   static sigjmp_buf& timeout_jmp_buf() { return timeout_jmp_buf_; }
   static void TimeoutHandler(int signum) {
-    struct itimerval timer;
-    timer.it_value.tv_sec = 0;
-    timer.it_value.tv_usec = 0;
-    timer.it_interval.tv_sec = 0;
-    timer.it_interval.tv_usec = 0;
-    setitimer(ITIMER_REAL, &timer, nullptr);
+    MyTest::TimeoutScope::Reset();
     siglongjmp(MyTest::timeout_jmp_buf(), 1);
   }
 
   class TimeoutScope {
    public:
-    TimeoutScope(int timeout_ms, void (*signal_handler)(int)) {
-      sigaction(SIGALRM, nullptr, &old_sa_);
-      getitimer(ITIMER_REAL, &old_timer_);
-      struct sigaction sa;
-      sa.sa_handler = signal_handler;
-      sigemptyset(&sa.sa_mask);
-      sa.sa_flags = SA_RESTART;
-      sigaction(SIGALRM, &sa, nullptr);
-      struct itimerval timer;
-      timer.it_value.tv_sec = timeout_ms / 1000;
-      timer.it_value.tv_usec = (timeout_ms % 1000) * 1000;
-      timer.it_interval.tv_sec = 0;
-      timer.it_interval.tv_usec = 0;
-      setitimer(ITIMER_REAL, &timer, nullptr);
+    TimeoutScope(int timeout_ms, void (*handler)(int)) {
+      if (in_scope_.exchange(true)) throw std::runtime_error("Nested TimeoutScope not allowed");
+      try {
+        // SIGALRM/siglongjmp timeout: bypasses stack unwinding (No destructors called on timeout).
+        if (sigaction(SIGALRM, nullptr, &old_sa_) < 0 || getitimer(ITIMER_REAL, &old_timer_) < 0) {
+          throw std::runtime_error("Failed to save state");
+        }
+        struct sigaction sa {};
+        sa.sa_handler = handler;
+        sa.sa_flags = SA_RESTART;
+        if (sigaction(SIGALRM, &sa, nullptr) < 0) throw std::runtime_error("Failed: sigaction");
+        struct itimerval timer {
+          {0, 0}, { timeout_ms / 1000, (timeout_ms % 1000) * 1000 }
+        };
+        if (setitimer(ITIMER_REAL, &timer, nullptr) < 0) throw std::runtime_error("Failed: itimer");
+      } catch (...) {
+        Reset();
+        throw;
+      }
     }
-    ~TimeoutScope() {
+    ~TimeoutScope() { Reset(); }
+    static void Reset() {
+      if (!in_scope_.exchange(false)) return;
+      struct itimerval zero_timer {};
+      setitimer(ITIMER_REAL, &zero_timer, nullptr);
       setitimer(ITIMER_REAL, &old_timer_, nullptr);
       sigaction(SIGALRM, &old_sa_, nullptr);
     }
 
    private:
-    struct sigaction old_sa_;
-    struct itimerval old_timer_;
+    inline static struct sigaction old_sa_;
+    inline static struct itimerval old_timer_;
+    inline static std::atomic<bool> in_scope_{false};
   };
 
  private:
@@ -795,7 +691,7 @@ class MyTest {
   static constexpr const char* kMainPidEnv = "MYTEST_MAIN_PID";
   static constexpr const char* kInitialCwdEnv = "MYTEST_INITIAL_CWD";
   static constexpr const char* kSpawnedEnv = "MYTEST_SPAWNED_CHILD";
-  static constexpr const char* kCalVersion = "26.01.31";
+  static constexpr const char* kCalVersion = "26.02.05";
   inline static std::string current_test_name_;
 
   // clang-format off
@@ -813,11 +709,9 @@ class MyTest {
       << "  -r [FILE]     : Write report via registered reporter (optional FILE)\n"
       << "  -h, --help    : Show this help message\n\n"
       << "Tests executed by the integrated testing utility, MyTest (v" << kCalVersion << ")\n";
-    // clang-format on
     return 0;
   }
-
-  void RunPostTestTask() { for (const auto& task : post_test_tasks_) task(); post_test_tasks_.clear(); }
+  void RunPostTestTask() { for (const auto& task : post_test_tasks_) task();post_test_tasks_.clear(); }
   // clang-format on
 
   int timeout_{kDefaultTimeoutMS};
@@ -864,13 +758,9 @@ class MyTest {
   struct group##name##_Register {                                                                  \
     group##name##_Register() {                                                                     \
       MyTest::Instance().RegisterTest(                                                             \
-          #group ":" #name,                                                                        \
-          []() { return group##name(__VA_ARGS__); },                                               \
-          MyTest::Instance().MakeTimeout(__VA_ARGS__),                                             \
-          _LOC);                                                                                   \
-      if (force_process) {                                                                         \
-        MyTest::Instance().RegisterProcessTest(#group ":" #name);                                  \
-      }                                                                                            \
+          #group ":" #name, []() { return group##name(__VA_ARGS__); },                             \
+          MyTest::Instance().MakeTimeout(__VA_ARGS__), _LOC);                                      \
+      if (force_process) { MyTest::Instance().RegisterProcessTest(#group ":" #name); }             \
     }                                                                                              \
   } group##name##_register;
 
@@ -925,21 +815,15 @@ class MyTest {
 
 #define TEST_SKIP(message)                                                                         \
   do {                                                                                             \
-    if (!MyTest::Instance().force()) {                                                             \
-      throw MyTest::TestSkipException(message);                                                    \
-    }                                                                                              \
+    if (!MyTest::Instance().force()) { throw MyTest::TestSkipException(message); }                 \
   } while (0)
 
 #define TEST_EXPECT_FAILURE(message)                                                               \
-  do {                                                                                             \
-    MyTest::Instance().MarkExpectFailure(true);                                                    \
-  } while (0)
+  do { MyTest::Instance().MarkExpectFailure(true); } while (0)
 
 #define SET_REPORTER(Reporter) MyTest::Instance().SetReporter(std::make_shared<Reporter>());
 
 #define RUN_ALL_TESTS(argc, argv) MyTest::Instance().RunAllTests(argc, argv)
-
-#define IS_MAIN_PROCESS() MyTest::IsMainProcess()
 
 #define TEST_NAME() MyTest::Instance().GetCurrentTestName()
 

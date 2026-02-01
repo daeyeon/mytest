@@ -1,46 +1,46 @@
 /*
-shared_memory.h - POSIX Shared Memory Utilities
+  Shared Memory Utilities
 
 Usage:
 
-WithShmMemory<T> - Convenience wrapper for cross-process shared memory:
+  WithShmMemory<T> - Convenience wrapper for cross-process shared memory:
 
-   struct Counter { std::atomic<int> value{0}; };
+    struct Counter { std::atomic<int> value{0}; };
 
-   WithShmMemory<Counter>("/my_counter", [](auto& counter) {
-     counter.value++;
-   });
+    WithShmMemory<Counter>("/my_counter", [](auto& counter) {
+      counter.value++;
+    });
 
-   IMPORTANT: WithShmMemory does NOT automatically remove shared memory.
-   You must manually cleanup in TEST_AFTER_ALL:
+    IMPORTANT: WithShmMemory does NOT automatically remove shared memory.
+    You must manually cleanup in TEST_AFTER_ALL:
 
-   TEST_AFTER_ALL(MyTests) {
-     ShmRegion<Counter>::OpenOrCreate("/my_counter").Remove();
-   }
+    TEST_AFTER_ALL(MyTests) {
+      ShmRegion<Counter>::OpenOrCreate("/my_counter").Remove();
+    }
 
 Pattern: Use in TEST_BEFORE/TEST_ISOLATE/TEST_AFTER, cleanup in TEST_AFTER_ALL
 
 Details (Advanced):
 
-1. Direct ShmRegion<T> usage:
-   struct Counter { std::atomic<int> value{0}; };
-   using SharedCounter = ShmRegion<Counter>;
+  1. Direct ShmRegion<T> usage:
+    struct Counter { std::atomic<int> value{0}; };
+    using SharedCounter = ShmRegion<Counter>;
 
-   auto region = SharedCounter::Create("/my_counter");
-   region->value++;
-   region.Remove();
+    auto region = SharedCounter::Create("/my_counter");
+    region->value++;
+    region.Remove();
 
-2. Fixed-size array (ShmSlotArray<T, N>):
-   struct Entry { pid_t pid{}; int count{}; };
-   using TraceArray = ShmSlotArray<Entry, 32>;
+  2. Fixed-size array (ShmSlotArray<T, N>):
+    struct Entry { pid_t pid{}; int count{}; };
+    using TraceArray = ShmSlotArray<Entry, 32>;
 
-   auto array = TraceArray::Create("/my_trace");
-   int slot = array.ReserveSlot();
-   array.At(slot).pid = getpid();
+    auto array = TraceArray::Create("/my_trace");
+    int slot = array.ReserveSlot();
+    array.At(slot).pid = getpid();
 
-   auto snap = array.Collect();
-   for (auto& e : snap.entries) { ... }
-   array.Remove();
+    auto snap = array.Collect();
+    for (auto& e : snap.entries) { ... }
+    array.Remove();
 */
 
 #pragma once

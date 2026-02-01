@@ -1,10 +1,11 @@
+#define MYTEST_CONFIG_USE_MAIN
 #include <mytest.h>
 #include <array>
 #include <fstream>
 #include <memory>
 #include <sstream>
 #include <vector>
-#include "../test_helpers.h"
+#include "../test-helpers.h"
 
 static int global_counter = 0;
 static bool global_flag = false;
@@ -68,8 +69,6 @@ TEST_AFTER(Basic) {
 
 TEST(TestOutput, SnapshotBasic) {
   printf("%s/TEST\n", TEST_NAME());
-  bool result = VerifySnapshotOutput(
-      {"-p", "^Basic", "-c"},
-      "test/01-basics/basic.out");
+  bool result = VerifySnapshotOutput({"-p", "^Basic", "-c"}, "test/01-basics/basic.out");
   EXPECT_EQ(true, result);
 }

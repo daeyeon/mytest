@@ -1,0 +1,18 @@
+name: Format
+
+on: [push, pull_request]
+
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install clang-format
+        run: |
+          sudo apt-get install -y clang-format
+      - name: Format CC
+        run: |
+          clang-format-18 --version
+          find include -name '*.h' -o -name '*.cc' | xargs clang-format-18 --Werror --dry-run -i

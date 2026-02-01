@@ -3,8 +3,8 @@
 #include <future>
 #include <thread>
 #include "../../fixture.h"
-#include "../../shared_memory.h"
-#include "../../test_helpers.h"
+#include "../../shared-memory.h"
+#include "../../test-helpers.h"
 
 // Single fixture for all tests in job mode
 static constexpr const char* FIXTURE_NAME = "/job_mode_fixture";
@@ -94,6 +94,6 @@ TEST(JobModeSnapshot, VerifyJobModeOutput) {
   printf("%s/TEST\n", TEST_NAME());
   bool result = VerifySnapshotOutput(
       {"-p", "^JobModeTests", "-j", "-c"},
-      "test/02-options/job-mode/job_mode_test.out");
+      "test/02-options/job-mode/job-mode-test.out");
   EXPECT_EQ(true, result);
 }

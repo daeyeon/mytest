@@ -1,6 +1,6 @@
 #define MYTEST_CONFIG_USE_MAIN
 #include <mytest.h>
-#include <mytest_report.h>
+#include <mytest-report.h>
 
 #include <cstdio>
 #include <fstream>
@@ -10,7 +10,7 @@
 
 namespace {
 
-const char* kReportPath = "report_writer_test.xml";
+const char* kReportPath = "report-writer-test.xml";
 
 std::string ReadFile(const char* path) {
   std::ifstream in(path);

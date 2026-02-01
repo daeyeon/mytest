@@ -6,8 +6,8 @@ set(CMAKE_CXX_STANDARD 17)
 add_library(mytest INTERFACE)
 target_include_directories(mytest INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
-# PROJECT_ROOT_DIR should be defined for test apps that need to locate test data.
-add_compile_definitions(PROJECT_ROOT_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+string(REPLACE "${CMAKE_CURRENT_SOURCE_DIR}/" "" BUILD_OUTPUT_DIR "${CMAKE_BINARY_DIR}")
+add_compile_definitions(BUILD_OUTPUT_DIR="${BUILD_OUTPUT_DIR}")
 
 add_executable(example.x test/00-example/example.cc)
 target_link_libraries(example.x PRIVATE mytest)
@@ -24,13 +24,13 @@ file(GLOB TEST_02_CLI_SRCS CONFIGURE_DEPENDS test/02-options/cli/*.cc)
 add_executable(2-cli.x ${TEST_02_CLI_SRCS})
 target_link_libraries(2-cli.x PRIVATE mytest)
 
-add_executable(3-hooks.x test/03-advanced/isolate_hooks_test.cc)
+add_executable(3-hooks.x test/03-advanced/isolate-hooks-test.cc)
 target_link_libraries(3-hooks.x PRIVATE mytest)
 
-add_executable(3-reporter.x test/03-advanced/report_writer_test.cc)
+add_executable(3-reporter.x test/03-advanced/report-writer-test.cc)
 target_link_libraries(3-reporter.x PRIVATE mytest)
 
-add_executable(3-must-call.x test/03-advanced/must_call_test.cc)
+add_executable(3-must-call.x test/03-advanced/must-call-test.cc)
 target_link_libraries(3-must-call.x PRIVATE mytest)
 
 enable_testing()

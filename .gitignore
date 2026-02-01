@@ -3,3 +3,4 @@
 /Testing/
 
 *.out.actual
+compile_commands.json

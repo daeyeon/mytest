@@ -1,5 +1,5 @@
 #include <mytest.h>
-#include "../test_helpers.h"
+#include "../test-helpers.h"
 
 static int global;
 static int global_counter = 0;

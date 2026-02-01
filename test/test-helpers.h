@@ -102,9 +102,7 @@ inline std::string ExecuteProc(const std::string& exe_path,
       result.append(buffer, bytes_read);
     }
 
-    if (pfd.revents & (POLLERR | POLLHUP)) {
-      break;
-    }
+    if (pfd.revents & (POLLERR | POLLHUP)) { break; }
   }
 
   close(pipefd[0]);
@@ -154,21 +152,28 @@ inline std::string GetExecutablePath() {
   return std::string(path);
 }
 
+// Try to get the project root directory by removing build_output_dir from executable path
+inline std::string GetProjectRoot(const std::string build_output_dir = BUILD_OUTPUT_DIR) {
+  std::string exe_path = GetExecutablePath();
+  if (exe_path.empty()) return std::filesystem::current_path().string();
+
+  std::filesystem::path path(exe_path);
+  std::string exe_str = path.string();
+
+  size_t pos = exe_str.find(build_output_dir);
+  if (pos != std::string::npos) {
+    std::string root = exe_str.substr(0, pos);
+    if (!root.empty() && root.back() == '/') { root.pop_back(); }
+    return root;
+  }
+  return std::filesystem::current_path().string();  // Fallback: use current directory
+}
+
 inline std::filesystem::path ResolvePath(const std::string& path) {
   namespace fs = std::filesystem;
   fs::path p(path);
-  if (p.is_absolute()) {
-    return p;
-  }
-#ifdef PROJECT_ROOT_DIR
-  fs::path root = fs::path(PROJECT_ROOT_DIR);
-  if (path.rfind("test/", 0) == 0) {
-    return root / path;
-  }
-  return root / "test" / path;
-#else
-  return p;
-#endif
+  if (p.is_absolute()) { return p; }
+  return fs::path(GetProjectRoot()) / path;
 }
 
 constexpr const char* kExpectedOutputExtension = ".out";

@@ -11,7 +11,7 @@ TEST_AFTER(TestSuite3) {
 }
 
 TEST_BEFORE(TestSuite4) {
-  if (!IS_MAIN_PROCESS()) {
+  if (!MyTest::IsMainProcess()) {
     TEST_SKIP();
   }
   std::cout << "Runs  : once before all TestSuite4 tests\n" << std::endl;

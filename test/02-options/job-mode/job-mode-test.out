@@ -12,11 +12,11 @@ JobModeTests/BEFORE
 JobModeTests/BEFORE_EACH
 JobModeTests:BasicSyncWithFailure/TEST
 
-EXPECT_EQ failed (job_mode_test.cc:24)
+EXPECT_EQ failed (job-mode-test.cc:24)
   Expected : (1 == 0)
     Actual : (1 == 0)
 
-ASSERT_EQ failed (job_mode_test.cc:26)
+ASSERT_EQ failed (job-mode-test.cc:26)
   Expected : (1 == 0)
     Actual : (1 == 0)
     Passed : Expected fail and failed.
@@ -26,7 +26,7 @@ JobModeTests/BEFORE
 JobModeTests/BEFORE_EACH
 JobModeTests:BasicTimeout/TEST
 
- Timed out : JobModeTests:BasicTimeout (job_mode_test.cc:32)
+ Timed out : JobModeTests:BasicTimeout (job-mode-test.cc:32)
     Passed : Expected fail and failed.
 [       OK ] JobModeTests:BasicTimeout
 [ RUN      ] JobModeTests:BasicSkip (PID: 28868)

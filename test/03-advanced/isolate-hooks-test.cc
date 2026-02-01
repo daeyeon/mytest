@@ -1,6 +1,6 @@
 #define MYTEST_CONFIG_USE_MAIN
 #include <mytest.h>
-#include "../shared_memory.h"
+#include "../shared-memory.h"
 
 struct IsolateHookTrace {
   int before_count = 0;

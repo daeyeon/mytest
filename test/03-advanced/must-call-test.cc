@@ -2,7 +2,7 @@
 #include <mytest.h>
 #include <future>
 #include <thread>
-#include "plugins/mytest_must_call.h"
+#include "plugins/mytest-must-call.h"
 
 TEST(CallVerification, MustCallSuccess) {
   auto cb = MUST_CALL([](int x) { EXPECT_EQ(x, 42); });

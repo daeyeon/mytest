@@ -1,5 +1,5 @@
 #include <mytest.h>
-#include <mytest_report.h>
+#include <mytest-report.h>
 
 #include <string>
 #include <vector>
