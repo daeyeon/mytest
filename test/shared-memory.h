@@ -104,7 +104,7 @@ class ShmRegion {
     }
 
     auto* ptr = static_cast<T*>(addr);
-    std::memset(ptr, 0, sizeof(T));
+    new (ptr) T(); // Value-initialize the object in shared memory.
     return ShmRegion(name, ptr);
   }
 
