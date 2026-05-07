@@ -376,7 +376,11 @@ class MyTest {
 
     auto ReadPipe = [](int fd, std::string& output) {
       char buf[4096];
-      for (ssize_t n; (n = read(fd, buf, sizeof(buf))) > 0;) output.append(buf, n);
+      for (ssize_t n; (n = read(fd, buf, sizeof(buf))) > 0;) {
+        output.append(buf, n);
+        fwrite(buf, 1, n, stdout);
+        fflush(stdout);
+      }
     };
 
     auto IsolatedTestExecutor = [this, &colors, &Clean, &ReadPipe](
@@ -436,10 +440,6 @@ class MyTest {
       }
       ReadPipe(pipe_fd[0], child_output);  // Read remaining output
       close(pipe_fd[0]);
-      if (!child_output.empty()) {
-        printf("%s", child_output.c_str());  // Print captured child output
-        fflush(stdout);
-      }
 
       bool failure = false, skipped = false;
       std::string message;
