@@ -29,6 +29,7 @@
 #include <regex>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <tuple>
 #include <unordered_map>
@@ -374,16 +375,28 @@ class MyTest {
       return {failure, skipped, message, result_details_};
     };
 
-    auto ReadPipe = [](int fd, std::string& output) {
-      char buf[4096];
-      for (ssize_t n; (n = read(fd, buf, sizeof(buf))) > 0;) {
-        output.append(buf, n);
-        fwrite(buf, 1, n, stdout);
-        fflush(stdout);
+    // clang-format off
+    auto CaptureFailureLine = [&Clean](std::string_view line, std::vector<std::string>& details) {
+      if (size_t pos = line.find(" failed ("); pos != std::string_view::npos && line.find(')', pos) != std::string_view::npos) {
+        details.push_back(Clean(std::string(line)));
       }
     };
 
-    auto IsolatedTestExecutor = [this, &colors, &Clean, &ReadPipe](
+    auto ReadPipe = [&CaptureFailureLine](int fd, std::string& pending_line, std::vector<std::string>& details) {
+      char buf[4096];
+      for (ssize_t n; (n = read(fd, buf, sizeof(buf))) > 0;) {
+        fwrite(buf, 1, n, stdout);
+        pending_line.append(buf, n);
+        size_t begin = 0;
+        for (size_t end; (end = pending_line.find('\n', begin)) != std::string::npos; begin = end + 1) {
+          CaptureFailureLine(std::string_view(pending_line).substr(begin, end - begin), details);
+        }
+        if (begin > 0) pending_line.erase(0, begin);
+      }
+    };
+    // clang-format on
+
+    auto IsolatedTestExecutor = [this, &colors, &CaptureFailureLine, &ReadPipe](
                                     const std::string& name, const TestFunction& test,
                                     const std::string group_name = "") -> ExecResult {
       char exe_path[PATH_MAX];
@@ -419,14 +432,15 @@ class MyTest {
         return {true, false, "Failed to spawn worker process", {}};
       }
 
-      // Wait and capture child's output
-      std::string child_output;
+      // Wait and forward child's output while retaining only summary detail candidates.
+      std::string pending_line;
+      std::vector<std::string> details;
       fcntl(pipe_fd[0], F_SETFL, fcntl(pipe_fd[0], F_GETFL) | O_NONBLOCK);
       int status = 0, exit_code = -1;
       auto start_time = std::chrono::steady_clock::now();
       auto parent_timeout = std::chrono::milliseconds(GetTestTimeout(name) + 200);
-      while (waitpid(worker_pid, &status, WNOHANG) == 0) {  // Non-blocking wait to capture pipe
-        ReadPipe(pipe_fd[0], child_output);                 // Read available output from pipe
+      while (waitpid(worker_pid, &status, WNOHANG) == 0) {     // Non-blocking wait to capture pipe
+        ReadPipe(pipe_fd[0], pending_line, details);           // Read available output from pipe
         if (std::chrono::steady_clock::now() - start_time > parent_timeout) {  // Check timeout
           kill(worker_pid, SIGKILL);
           waitpid(worker_pid, &status, 0);
@@ -438,8 +452,11 @@ class MyTest {
       if (exit_code != -2) {
         exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : 128 + WTERMSIG(status);
       }
-      ReadPipe(pipe_fd[0], child_output);  // Read remaining output
+      ReadPipe(pipe_fd[0], pending_line, details);  // Read remaining output
       close(pipe_fd[0]);
+      if (!pending_line.empty()) {
+        CaptureFailureLine(std::string_view(pending_line), details);
+      }
 
       bool failure = false, skipped = false;
       std::string message;
@@ -482,14 +499,6 @@ class MyTest {
         failure = true, message = "Unknown exit code or crash: " + std::to_string(exit_code);
         if (locations_.count(name)) message += " " + locations_[name];
         printf("\n%s%s%s\n", colors[RED], message.c_str(), colors[RESET]);
-      }
-      std::vector<std::string> details;
-      std::stringstream ss(child_output);
-      for (std::string line; std::getline(ss, line);) {
-        if (std::string clean = Clean(line);
-            clean.find(" failed (") != std::string::npos && clean.find(')') != std::string::npos) {
-          details.push_back(std::move(clean));
-        }
       }
       return std::make_tuple(failure, skipped, message, details);
     };
@@ -691,7 +700,7 @@ class MyTest {
   static constexpr const char* kMainPidEnv = "MYTEST_MAIN_PID";
   static constexpr const char* kInitialCwdEnv = "MYTEST_INITIAL_CWD";
   static constexpr const char* kSpawnedEnv = "MYTEST_SPAWNED_CHILD";
-  static constexpr const char* kCalVersion = "26.02.05";
+  static constexpr const char* kCalVersion = "26.05.08";
   inline static std::string current_test_name_;
 
   // clang-format off
