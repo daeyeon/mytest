@@ -2,5 +2,6 @@
 /out/
 /Testing/
 
+.DS_Store
 *.out.actual
 compile_commands.json

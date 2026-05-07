@@ -152,6 +152,72 @@ inline std::string GetExecutablePath() {
   return std::string(path);
 }
 
+// Runs this test binary with args and returns whether marker is emitted before the timeout.
+inline bool OutputAppearsBeforeExit(const std::vector<const char*>& args,
+                                    const std::string& marker,
+                                    int timeout_ms = 300) {
+  const std::string exe_path = GetExecutablePath();
+  std::vector<const char*> argv_vec = {exe_path.c_str()};
+  for (auto arg : args) {
+    if (arg) argv_vec.push_back(arg);
+  }
+  argv_vec.push_back(nullptr);
+
+  int pipefd[2];
+  if (pipe(pipefd) == -1) return false;
+
+  // Capture the child process output so the caller can detect early emission.
+  posix_spawn_file_actions_t actions;
+  posix_spawn_file_actions_init(&actions);
+  posix_spawn_file_actions_adddup2(&actions, pipefd[1], STDOUT_FILENO);
+  posix_spawn_file_actions_adddup2(&actions, pipefd[1], STDERR_FILENO);
+  posix_spawn_file_actions_addclose(&actions, pipefd[0]);
+  posix_spawn_file_actions_addclose(&actions, pipefd[1]);
+
+  pid_t pid = -1;
+  const char* env_vars[] = {"IS_SPAWNED_CHILD=1", nullptr};
+  int spawn_ret = posix_spawn(&pid,
+                              exe_path.c_str(),
+                              &actions,
+                              nullptr,
+                              const_cast<char* const*>(argv_vec.data()),
+                              const_cast<char* const*>(env_vars));
+  posix_spawn_file_actions_destroy(&actions);
+  close(pipefd[1]);
+  if (spawn_ret != 0) {
+    close(pipefd[0]);
+    return false;
+  }
+
+  std::string output;
+  char buffer[4096];
+  bool saw_marker = false;
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+
+  // Stop reading as soon as the marker appears; the child may intentionally keep running.
+  while (std::chrono::steady_clock::now() < deadline && !saw_marker) {
+    struct pollfd pfd;
+    pfd.fd = pipefd[0];
+    pfd.events = POLLIN;
+    int poll_ret = poll(&pfd, 1, 10);
+    if (poll_ret > 0 && (pfd.revents & POLLIN)) {
+      ssize_t bytes_read = read(pipefd[0], buffer, sizeof(buffer));
+      if (bytes_read > 0) {
+        output.append(buffer, bytes_read);
+        saw_marker = output.find(marker) != std::string::npos;
+      }
+    }
+  }
+
+  // The helper only cares about pre-exit output, so terminate the probe after observation.
+  kill(pid, SIGKILL);
+  int status = 0;
+  waitpid(pid, &status, 0);
+  close(pipefd[0]);
+
+  return saw_marker;
+}
+
 // Try to get the project root directory by removing build_output_dir from executable path
 inline std::string GetProjectRoot(const std::string build_output_dir = BUILD_OUTPUT_DIR) {
   std::string exe_path = GetExecutablePath();

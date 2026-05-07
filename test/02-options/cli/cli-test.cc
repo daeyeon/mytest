@@ -4,6 +4,7 @@
 
 #include <filesystem>
 #include <string>
+#include <thread>
 #include <vector>
 
 static char test_app_exe[] = BUILD_OUTPUT_DIR "/1-basics.x";
@@ -103,4 +104,36 @@ TEST(SnapshotTests, MixTestsOutput) {
   bool result = VerifySnapshotOutput(
       exe_path, {"-p", "^Mix", "-c", "-s", nullptr}, "test/02-options/cli", "cli-test-mix.out");
   EXPECT_EQ(true, result);
+}
+
+TEST(SnapshotTests, IsolatedFailureSummaryDetails) {
+  if (IsTestMode()) {
+    TEST_SKIP("In test mode");
+  }
+
+  bool result = VerifySnapshotOutput({"-p", "^RegressionProbe:FailureSummary$", "-c", nullptr},
+                                     "test/02-options/cli/cli-test-isolation1.out");
+  EXPECT_EQ(true, result);
+}
+
+TEST(CliOptions, IsolatedOutputIsRealtime) {
+  if (IsTestMode()) {
+    TEST_SKIP("In test mode");
+  }
+
+  EXPECT_EQ(true,
+            OutputAppearsBeforeExit({"-p", "^RegressionProbe:RealtimeOutput$", "-c", nullptr},
+                                    "REGRESSION_REALTIME_MARKER"));
+}
+
+TEST_ISOLATE(RegressionProbe, FailureSummary) {
+  if (!IsTestMode()) return;
+  EXPECT_EQ(1, 2);
+}
+
+TEST_ISOLATE(RegressionProbe, RealtimeOutput) {
+  if (!IsTestMode()) return;
+  printf("REGRESSION_REALTIME_MARKER\n");
+  fflush(stdout);
+  std::this_thread::sleep_for(std::chrono::milliseconds(1000));
 }
