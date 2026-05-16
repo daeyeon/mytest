@@ -42,7 +42,7 @@
 
 namespace mytest {
 
-namespace {
+namespace detail {
 
 inline std::string ApplyTemplate(std::string_view tmpl,
                                  const std::unordered_map<std::string, std::string>& replacements) {
@@ -198,7 +198,7 @@ inline std::string CurrentTimestamp() {
   return oss.str();
 }
 
-}  // namespace
+}  // namespace detail
 
 class GTestXmlReporter : public Reporter {
  public:
@@ -236,7 +236,7 @@ class GTestXmlReporter : public Reporter {
         R"(      <system-out>{{message}}</system-out>
 )";
 
-    auto all_results = LoadExistingGTestResults(path);
+    auto all_results = detail::LoadExistingGTestResults(path);
     all_results.reserve(all_results.size() + new_results.size());
     all_results.insert(all_results.end(), new_results.begin(), new_results.end());
 
@@ -263,33 +263,36 @@ class GTestXmlReporter : public Reporter {
         const std::string status = res.skipped ? "notrun" : "run";
         std::string body;
         if (res.failure) {
-          body = ApplyTemplate(kFailureTemplate, {{"message", EscapeXml(res.message)}});
+          body = detail::ApplyTemplate(kFailureTemplate,
+                                       {{"message", detail::EscapeXml(res.message)}});
         } else if (res.skipped) {
-          body = ApplyTemplate(kSkippedTemplate, {{"message", EscapeXml(res.message)}});
+          body = detail::ApplyTemplate(kSkippedTemplate,
+                                       {{"message", detail::EscapeXml(res.message)}});
         } else if (!res.message.empty()) {
-          body = ApplyTemplate(kSystemOutTemplate, {{"message", EscapeXml(res.message)}});
+          body = detail::ApplyTemplate(kSystemOutTemplate,
+                                       {{"message", detail::EscapeXml(res.message)}});
         }
 
         const std::unordered_map<std::string, std::string> testcase_common = {
-            {"name", EscapeXml(res.name)},
+            {"name", detail::EscapeXml(res.name)},
             {"status", status},
-            {"classname", EscapeXml(suite_name)}};
+            {"classname", detail::EscapeXml(suite_name)}};
 
         if (body.empty()) {
-          cases_stream << ApplyTemplate(kTestcaseSelfClosingTemplate, testcase_common);
+          cases_stream << detail::ApplyTemplate(kTestcaseSelfClosingTemplate, testcase_common);
         } else {
           auto map_with_body = testcase_common;
           map_with_body.insert({"body", body});
-          cases_stream << ApplyTemplate(kTestcaseTemplate, map_with_body);
+          cases_stream << detail::ApplyTemplate(kTestcaseTemplate, map_with_body);
         }
       }
 
-      suites_stream << ApplyTemplate(kTestsuiteTemplate,
-                                     {{"name", EscapeXml(suite_name)},
-                                      {"tests", std::to_string(cases.size())},
-                                      {"failures", std::to_string(suite_failures)},
-                                      {"skipped", std::to_string(suite_skipped)},
-                                      {"testcases", cases_stream.str()}});
+      suites_stream << detail::ApplyTemplate(kTestsuiteTemplate,
+                                             {{"name", detail::EscapeXml(suite_name)},
+                                              {"tests", std::to_string(cases.size())},
+                                              {"failures", std::to_string(suite_failures)},
+                                              {"skipped", std::to_string(suite_skipped)},
+                                              {"testcases", cases_stream.str()}});
     }
 
     std::ofstream xml(path);
@@ -297,10 +300,11 @@ class GTestXmlReporter : public Reporter {
       std::cerr << "Failed to write gtest XML report: " << path << std::endl;
       return;
     }
-    xml << ApplyTemplate(kTestsuitesTemplate, {{"tests", std::to_string(aggregated_total)},
-                                               {"failures", std::to_string(aggregated_failures)},
-                                               {"timestamp", CurrentTimestamp()},
-                                               {"body", suites_stream.str()}});
+    xml << detail::ApplyTemplate(kTestsuitesTemplate,
+                                 {{"tests", std::to_string(aggregated_total)},
+                                  {"failures", std::to_string(aggregated_failures)},
+                                  {"timestamp", detail::CurrentTimestamp()},
+                                  {"body", suites_stream.str()}});
   }
 };
 

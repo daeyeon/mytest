@@ -714,7 +714,7 @@ class MyTest {
   static constexpr const char* kMainPidEnv = "MYTEST_MAIN_PID";
   static constexpr const char* kInitialCwdEnv = "MYTEST_INITIAL_CWD";
   static constexpr const char* kSpawnedEnv = "MYTEST_SPAWNED_CHILD";
-  static constexpr const char* kCalVersion = "26.05.08";
+  static constexpr const char* kCalVersion = "26.05.16";
   inline static std::string current_test_name_;
 
   // clang-format off
@@ -769,8 +769,8 @@ class MyTest {
 };
 
 #define TEST_INTERNAL(force_process, group, name, ...)                                             \
-  void group##name##_impl();                                                                       \
-  void group##name(int timeout_ms = MyTest::Instance().timeout()) {                                \
+  static void group##name##_impl();                                                                \
+  static void group##name(int timeout_ms = MyTest::Instance().timeout()) {                         \
     if (sigsetjmp(MyTest::timeout_jmp_buf(), 1) == 0) {                                            \
       MyTest::TimeoutScope timeout(timeout_ms, MyTest::TimeoutHandler);                            \
       group##name##_impl();                                                                        \
@@ -778,7 +778,7 @@ class MyTest {
       throw MyTest::TestTimeoutException(#group ":" #name);                                        \
     }                                                                                              \
   }                                                                                                \
-  struct group##name##_Register {                                                                  \
+  static struct group##name##_Register {                                                           \
     group##name##_Register() {                                                                     \
       MyTest::Instance().RegisterTest(                                                             \
           #group ":" #name, []() { return group##name(__VA_ARGS__); },                             \
@@ -789,52 +789,52 @@ class MyTest {
 
 #define TEST(group, name, ...)                                                                     \
   TEST_INTERNAL(false, group, name, __VA_ARGS__)                                                   \
-  void group##name##_impl()
+  static void group##name##_impl()
 
 #define TEST_ISOLATE(group, name, ...)                                                             \
   TEST_INTERNAL(true, group, name, __VA_ARGS__)                                                    \
-  void group##name##_impl()
+  static void group##name##_impl()
 
 #define TEST_BEFORE_EACH(group)                                                                    \
-  void group##_BeforeEach();                                                                       \
-  struct group##_BeforeEach_Register {                                                             \
+  static void group##_BeforeEach();                                                                \
+  static struct group##_BeforeEach_Register {                                                      \
     group##_BeforeEach_Register() {                                                                \
       MyTest::Instance().RegisterTestBeforeEach(#group, group##_BeforeEach);                       \
     }                                                                                              \
   } group##_BeforeEach_register;                                                                   \
-  void group##_BeforeEach()
+  static void group##_BeforeEach()
 
 #define TEST_AFTER_EACH(group)                                                                     \
-  void group##_AfterEach();                                                                        \
-  struct group##_AfterEach_Register {                                                              \
+  static void group##_AfterEach();                                                                 \
+  static struct group##_AfterEach_Register {                                                       \
     group##_AfterEach_Register() {                                                                 \
       MyTest::Instance().RegisterTestAfterEach(#group, group##_AfterEach);                         \
     }                                                                                              \
   } group##_AfterEach_register;                                                                    \
-  void group##_AfterEach()
+  static void group##_AfterEach()
 
 #define TEST_BEFORE(group)                                                                         \
-  void group##_Before();                                                                           \
-  struct group##_Before_Register {                                                                 \
+  static void group##_Before();                                                                    \
+  static struct group##_Before_Register {                                                          \
     group##_Before_Register() { MyTest::Instance().RegisterTestBefore(#group, group##_Before); }   \
   } group##_Before_register;                                                                       \
-  void group##_Before()
+  static void group##_Before()
 
 #define TEST_AFTER(group)                                                                          \
-  void group##_After();                                                                            \
-  struct group##_After_Register {                                                                  \
+  static void group##_After();                                                                     \
+  static struct group##_After_Register {                                                           \
     group##_After_Register() { MyTest::Instance().RegisterTestAfter(#group, group##_After); }      \
   } group##_After_register;                                                                        \
-  void group##_After()
+  static void group##_After()
 
 #define TEST_AFTER_ALL(group)                                                                      \
-  void group##_AfterAll();                                                                         \
-  struct group##_AfterAll_Register {                                                               \
+  static void group##_AfterAll();                                                                  \
+  static struct group##_AfterAll_Register {                                                        \
     group##_AfterAll_Register() {                                                                  \
       MyTest::Instance().RegisterTestAfterAll(#group, group##_AfterAll);                           \
     }                                                                                              \
   } group##_AfterAll_register;                                                                     \
-  void group##_AfterAll()
+  static void group##_AfterAll()
 
 #define TEST_SKIP(message)                                                                         \
   do {                                                                                             \
