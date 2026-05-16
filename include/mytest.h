@@ -455,8 +455,8 @@ class MyTest {
       int status = 0, exit_code = -1;
       auto start_time = std::chrono::steady_clock::now();
       auto parent_timeout = std::chrono::milliseconds(GetTestTimeout(name) + 200);
-      while (waitpid(worker_pid, &status, WNOHANG) == 0) {     // Non-blocking wait to capture pipe
-        ReadPipe(pipe_fd[0], pending_line, details);           // Read available output from pipe
+      while (waitpid(worker_pid, &status, WNOHANG) == 0) {  // Non-blocking wait to capture pipe
+        ReadPipe(pipe_fd[0], pending_line, details);        // Read available output from pipe
         if (std::chrono::steady_clock::now() - start_time > parent_timeout) {  // Check timeout
           kill(worker_pid, SIGKILL);
           waitpid(worker_pid, &status, 0);
@@ -470,9 +470,7 @@ class MyTest {
       }
       ReadPipe(pipe_fd[0], pending_line, details);  // Read remaining output
       close(pipe_fd[0]);
-      if (!pending_line.empty()) {
-        CaptureFailureLine(std::string_view(pending_line), details);
-      }
+      if (!pending_line.empty()) { CaptureFailureLine(std::string_view(pending_line), details); }
 
       bool failure = false, skipped = false;
       std::string message;

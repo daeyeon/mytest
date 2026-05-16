@@ -9,10 +9,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      - name: Install clang-format
-        run: |
-          sudo apt-get install -y clang-format
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
       - name: Format CC
         run: |
-          clang-format-18 --version
-          find include -name '*.h' -o -name '*.cc' | xargs clang-format-18 --Werror --dry-run -i
+          uvx --from clang-format==18.1.8 clang-format --version
+          git ls-files 'include/*.h' 'include/*.cc' | xargs -r uvx --from clang-format==18.1.8 clang-format --Werror --dry-run -i
