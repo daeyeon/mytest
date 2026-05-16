@@ -173,6 +173,22 @@ class MyTest {
     }
   }
 
+  class SilenceScope {
+   public:
+    SilenceScope() : active_(!MyTest::Instance().silent()) {
+      if (active_ && depth_++ == 0) MyTest::Instance().SilenceOutput(true);
+    }
+    ~SilenceScope() {
+      if (active_ && --depth_ == 0) MyTest::Instance().SilenceOutput(false);
+    }
+    SilenceScope(const SilenceScope&) = delete;
+    SilenceScope& operator=(const SilenceScope&) = delete;
+
+   private:
+    bool active_;
+    inline static int depth_{0};
+  };
+
   // clang-format off
   void RegisterTest(const std::string& group_name, std::function<void()> test, std::optional<int> timeout = std::nullopt, const std::string& loc = "") { tests_.emplace_back(group_name, std::move(test)); if (timeout) test_timeouts_[group_name] = *timeout; if (!loc.empty()) locations_[group_name] = loc;}
   void RegisterTestBeforeEach(const std::string& group_name, std::function<void()> test) { test_before_each_[group_name] = test; }

@@ -126,6 +126,18 @@ TEST(CliOptions, IsolatedOutputIsRealtime) {
                                     "REGRESSION_REALTIME_MARKER"));
 }
 
+TEST(CliOptions, IsolatedSilenceScope) {
+  if (IsTestMode()) {
+    TEST_SKIP("In test mode");
+  }
+
+  auto output = ExecuteSelf({"-p", "^RegressionProbe:SilenceScope$", "-c", nullptr});
+  EXPECT_NE(output.find("VISIBLE_BEFORE"), std::string::npos);
+  EXPECT_EQ(output.find("HIDDEN_OUTPUT"), std::string::npos);
+  EXPECT_EQ(output.find("STILL_HIDDEN"), std::string::npos);
+  EXPECT_NE(output.find("VISIBLE_AFTER"), std::string::npos);
+}
+
 TEST_ISOLATE(RegressionProbe, FailureSummary) {
   if (!IsTestMode()) return;
   EXPECT_EQ(1, 2);
@@ -136,4 +148,16 @@ TEST_ISOLATE(RegressionProbe, RealtimeOutput) {
   printf("REGRESSION_REALTIME_MARKER\n");
   fflush(stdout);
   std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+}
+
+TEST_ISOLATE(RegressionProbe, SilenceScope) {
+  if (!IsTestMode()) return;
+  printf("VISIBLE_BEFORE\n");
+  {
+    MyTest::SilenceScope silence;
+    printf("HIDDEN_OUTPUT\n");
+    { MyTest::SilenceScope nested; }
+    printf("STILL_HIDDEN\n");
+  }
+  printf("VISIBLE_AFTER\n");
 }
