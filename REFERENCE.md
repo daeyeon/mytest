@@ -740,7 +740,7 @@ Optional test helpers can live in separate headers. Use this for
 assertion-like features outside the core header.
 
 The
-[test/03-advanced/plugins/mytest-must-call.h](test/03-advanced/plugins/mytest-must-call.h)
+[test/03-advanced/ext/mytest-must-call.h](test/03-advanced/ext/mytest-must-call.h)
 helper adds callback call-count checks.
 
 #### `MUST_CALL(f)`
@@ -765,7 +765,7 @@ TEST(CallVerification, CalledOnce) {
 ```
 
 The
-[test/03-advanced/plugins/mytest-match.h](test/03-advanced/plugins/mytest-match.h)
+[test/03-advanced/ext/mytest-match.h](test/03-advanced/ext/mytest-match.h)
 helper adds regular-expression checks for text.
 
 #### `EXPECT_MATCH(text, pattern)`
@@ -792,7 +792,7 @@ TEST(Match, ContainsGeneratedId) {
 }
 ```
 
-See [test/03-advanced/plugins/README.md](test/03-advanced/plugins/README.md)
+See [test/03-advanced/ext/README.md](test/03-advanced/ext/README.md)
 for usage details.
 
 ### Reporter Extensions

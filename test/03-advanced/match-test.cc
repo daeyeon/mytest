@@ -1,7 +1,7 @@
 #define MYTEST_CONFIG_USE_MAIN
 #include <mytest.h>
 #include <string>
-#include "plugins/mytest-match.h"
+#include "ext/mytest-match.h"
 
 TEST(Match, ExpectMatchSuccess) {
   EXPECT_MATCH("user-42", "user-[0-9]+");
