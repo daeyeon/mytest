@@ -1,6 +1,8 @@
 #include <mytest.h>
 #include <mytest-report.h>
 
+#include <filesystem>
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -63,6 +65,12 @@ TEST(Advanced, TimeoutExpected, 1000 /*ms*/) {
   // This test is expected to fail because it takes longer than 1000ms.
   TEST_EXPECT_FAILURE();
   std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+}
+
+TEST(Advanced, TempPath) {
+  // TEST_TEMP_PATH() creates a per-test dir and removes it after the test.
+  std::ofstream(TEST_TEMP_PATH() / "note.txt") << "temporary test data";
+  ASSERT(std::filesystem::exists(TEST_TEMP_PATH() / "note.txt"));
 }
 
 //-----------------------------------------------------------------------------

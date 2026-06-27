@@ -22,7 +22,9 @@
 #include <csignal>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <functional>
+#include <iomanip>
 #include <iostream>
 #include <memory>
 #include <optional>
@@ -30,6 +32,7 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <thread>
 #include <tuple>
 #include <unordered_map>
@@ -202,6 +205,8 @@ class MyTest {
   void RegisterProcessTest(const std::string& name) { process_tests_.insert(name); }
   void RegisterPostTestTask(std::function<void()> task) { post_test_tasks_.push_back(std::move(task)); }
   void SetReporter(std::shared_ptr<mytest::Reporter> reporter) { reporter_ = std::move(reporter); }
+  void SetTempRoot(std::filesystem::path path) { temp_root_ = std::move(path); }
+  std::filesystem::path TempPath() { if (!current_temp_path_.empty()) return each_temp_paths_.try_emplace(current_test_name_, current_temp_path_).first->second; return TempPathFor(current_test_name_); }
   static std::optional<int> MakeTimeout() { return std::nullopt; }
   template <typename T> static std::optional<int> MakeTimeout(T value) { return std::optional<int>{static_cast<int>(value)}; }
   static bool IsMainProcess() { static const pid_t cached_main_pid = []() { if (const char* env_pid = getenv(MyTest::kMainPidEnv)) { return static_cast<pid_t>(std::strtol(env_pid, nullptr, 10)); } return getpid(); }(); return getpid() == cached_main_pid; }
@@ -232,21 +237,18 @@ class MyTest {
       setenv(kMainPidEnv, std::to_string(getpid()).c_str(), 1);
       char cwd_buf[PATH_MAX];
       if (getcwd(cwd_buf, sizeof(cwd_buf))) setenv(kInitialCwdEnv, cwd_buf, 1);
+      CleanupStaleTempRoots();
     }
 
-    bool is_spawned = (getenv(kSpawnedEnv) != nullptr);
-    if (is_spawned) {
-      unsetenv(kSpawnedEnv);
-      if (const char* cwd_env = getenv(kInitialCwdEnv)) { std::ignore = chdir(cwd_env); }
-    }
+    bool is_spawned = false;
+    current_temp_path_.clear();
     std::vector<std::regex> include_patterns;
     bool use_report = false;
     std::string report_output_path;
     test_results_.clear();
 
-    // Parse CLI arguments
+    // clang-format off
     for (int i = 1; i < argc; ++i) {
-      // clang-format off
       std::string arg = argv[i], next = (i + 1 < argc) ? argv[i + 1] : "";
       auto consume_next = [&]() { i++; return next; };
       if (arg == "-p" && !next.empty()) {
@@ -260,14 +262,13 @@ class MyTest {
       else if (arg == "-s") silent_ = true;
       else if (arg == "-f") force_ = true;
       else if (arg == "-j") job_isolation_ = true;
-      else if (arg == "-r") {
-        if (!reporter_) { std::cerr << "No reporter registered.\n"; return 1; }
-        use_report = true;
-        report_output_path = (!next.empty() && next[0] != '-') ? consume_next() : "";
-      }
+      else if (arg == kSpawnedArg) is_spawned = true;
+      else if (arg == kTempPathArg && !next.empty()) current_temp_path_ = consume_next();
+      else if (arg == "-r") { if (!reporter_) { std::cerr << "No reporter registered.\n"; return 1; } use_report = true; report_output_path = (!next.empty() && next[0] != '-') ? consume_next() : ""; }
       else if (arg == "-h" || arg == "--help") return PrintUsage(argv[0]);
-      // clang-format on
     }
+    if (is_spawned) { if (const char* cwd_env = getenv(kInitialCwdEnv)) { std::ignore = chdir(cwd_env); } }
+    // clang-format on
 
     auto IsTestSelected = [this, &include_patterns](const std::string& name) {
       auto matches = [&](const auto& p) { return std::regex_search(name, p); };
@@ -373,6 +374,7 @@ class MyTest {
                                   const std::string& name, const TestFunction& test,
                                   const std::string& group_name) -> ExecResult {
       result_details_.clear();
+      auto temp_cleanup = OnScopeLeave::create([this, name]() { CleanupTempPath(name); });
       bool should_call_after_hook = false;
       auto [failure, skipped, message] = ResultOf([&]() {
         auto post_task_runner = OnScopeLeave::create([this]() { RunPostTestTask(); });
@@ -415,13 +417,18 @@ class MyTest {
     auto IsolatedTestExecutor = [this, &colors, &CaptureFailureLine, &ReadPipe](
                                     const std::string& name, const TestFunction& test,
                                     const std::string group_name = "") -> ExecResult {
+      const std::filesystem::path temp_path = TempPathFor(name);
+      auto temp_cleanup = OnScopeLeave::create([this, name]() { CleanupTempPath(name); });
       char exe_path[PATH_MAX];
       if (!GetExecutablePath(exe_path, sizeof(exe_path))) {
         return {true, false, "Failed to resolve executable path", {}};
       }
       std::string timeout = std::to_string(GetTestTimeout(name));
       std::string pattern = name + "$";
-      std::vector<const char*> argv_vec = {exe_path, "-p", pattern.c_str(), "-t", timeout.c_str()};
+      std::string temp_path_arg = temp_path.string();
+      std::vector<const char*> argv_vec = {
+          exe_path,        "-p",        pattern.c_str(), "-t",
+          timeout.c_str(), kSpawnedArg, kTempPathArg,    temp_path_arg.c_str()};
       if (!use_color_) argv_vec.push_back("-c");
       if (silent_) argv_vec.push_back("-s");
       if (job_isolation_) argv_vec.push_back("-j");
@@ -437,10 +444,8 @@ class MyTest {
       posix_spawn_file_actions_addclose(&actions, pipe_fd[0]);
       posix_spawn_file_actions_addclose(&actions, pipe_fd[1]);
       pid_t worker_pid = -1;
-      setenv(kSpawnedEnv, "1", 1);
       int spawn_ret = posix_spawn(&worker_pid, exe_path, &actions, nullptr,
                                   const_cast<char* const*>(argv_vec.data()), environ);
-      unsetenv(kSpawnedEnv);
       posix_spawn_file_actions_destroy(&actions);
       close(pipe_fd[1]);  // Parent closes write end
       if (spawn_ret != 0) {
@@ -628,7 +633,6 @@ class MyTest {
         group_failure = group_failure || failure;
         if (failure) num_failure++;
       }
-
       PrintEnd(group_failure, group_skipped, group_name);
     }
 
@@ -647,6 +651,13 @@ class MyTest {
       ReportOptions options;
       options.output_path = report_output_path;
       reporter_->OnComplete(test_results_, summary, options);
+    }
+    if (IsMainProcess()) {
+      std::error_code ec;
+      const auto temp_root = TempRoot();
+      std::filesystem::remove(temp_root, ec);                              // temp root
+      std::filesystem::remove(temp_root.parent_path(), ec);                // .mytest/tmp
+      std::filesystem::remove(temp_root.parent_path().parent_path(), ec);  // .mytest
     }
     return num_failure > 0 ? 1 : 0;
   }
@@ -713,8 +724,9 @@ class MyTest {
   static constexpr int kDefaultTimeoutMS = 60000;
   static constexpr const char* kMainPidEnv = "MYTEST_MAIN_PID";
   static constexpr const char* kInitialCwdEnv = "MYTEST_INITIAL_CWD";
-  static constexpr const char* kSpawnedEnv = "MYTEST_SPAWNED_CHILD";
-  static constexpr const char* kCalVersion = "26.05.16";
+  static constexpr const char* kSpawnedArg = "--internal-spawned";
+  static constexpr const char* kTempPathArg = "--internal-temp-path";
+  static constexpr const char* kCalVersion = "26.06.27";
   inline static std::string current_test_name_;
 
   // clang-format off
@@ -735,6 +747,11 @@ class MyTest {
     return 0;
   }
   void RunPostTestTask() { for (const auto& task : post_test_tasks_) task();post_test_tasks_.clear(); }
+  // Temp path rule: <cwd>/.mytest/tmp/<instance-id>/test-<temp-id>
+  std::filesystem::path TempRoot() const { const char* cwd = getenv(kInitialCwdEnv); const char* main_pid = getenv(kMainPidEnv); return (temp_root_.empty() ? (cwd ? std::filesystem::path(cwd) : std::filesystem::current_path()) : temp_root_) / ".mytest" / "tmp" / (main_pid ? main_pid : std::to_string(getpid())); }
+  std::filesystem::path TempPathFor(const std::string& key) { if (auto it = each_temp_paths_.find(key); it != each_temp_paths_.end()) { return it->second; } std::ostringstream temp_id; temp_id << "test-" << std::setw(3) << std::setfill('0') << ++temp_path_sequence_; const std::filesystem::path root = TempRoot(); std::error_code ec; std::filesystem::create_directories(root, ec); if (ec) throw std::runtime_error("Failed to create temp root: " + root.string()); const std::filesystem::path path = root / temp_id.str(); std::filesystem::create_directories(path, ec); if (ec) throw std::runtime_error("Failed to create temp path: " + path.string()); return each_temp_paths_[key] = path; }
+  void CleanupTempPath(const std::string& key) { std::error_code ec; if (auto it = each_temp_paths_.find(key); it != each_temp_paths_.end()) { std::filesystem::remove_all(it->second, ec); each_temp_paths_.erase(it); } }
+  void CleanupStaleTempRoots() { std::error_code ec; const auto temp_home = TempRoot().parent_path(); if (std::filesystem::is_directory(temp_home, ec)) { for (const auto& entry : std::filesystem::directory_iterator(temp_home, ec)) { if (!entry.is_directory(ec)) continue; const auto name = entry.path().filename().string(); char* end = nullptr; const auto pid = static_cast<pid_t>(std::strtol(name.c_str(), &end, 10)); if (*end == '\0' && pid > 0 && kill(pid, 0) == -1 && errno == ESRCH) { std::filesystem::remove_all(entry.path(), ec); } } } }
   // clang-format on
 
   int timeout_{kDefaultTimeoutMS};
@@ -752,8 +769,12 @@ class MyTest {
   std::unordered_map<std::string, std::string> locations_;
   std::vector<std::function<void()>> post_test_tasks_;
   std::vector<TestResult> test_results_;
+  std::unordered_map<std::string, std::filesystem::path> each_temp_paths_;
+  unsigned long long temp_path_sequence_{0};
+  std::filesystem::path current_temp_path_;
   std::vector<std::string> result_details_;
   std::shared_ptr<mytest::Reporter> reporter_;
+  std::filesystem::path temp_root_;
 
   using TestFunction = std::function<void()>;
   using TestPair = std::pair<std::string, TestFunction>;
@@ -849,6 +870,7 @@ class MyTest {
 #define RUN_ALL_TESTS(argc, argv) MyTest::Instance().RunAllTests(argc, argv)
 
 #define TEST_NAME() MyTest::Instance().GetCurrentTestName()
+#define TEST_TEMP_PATH() MyTest::Instance().TempPath()
 
 #ifdef MYTEST_CONFIG_USE_MAIN
 int main(int argc, char* argv[]) { return RUN_ALL_TESTS(argc, argv); }
