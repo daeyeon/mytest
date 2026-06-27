@@ -16,10 +16,12 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <algorithm>
 #include <atomic>
 #include <cerrno>
 #include <chrono>
 #include <csignal>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -30,6 +32,7 @@
 #include <optional>
 #include <regex>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -153,27 +156,11 @@ class MyTest {
   }
 
   void SilenceOutput(bool silent) {
-    static int backups[2] = {-1, -1};
-    FILE* streams[2] = {stdout, stderr};
-    if (silent) {
-      if (backups[0] != -1) return;
-      std::cout.flush();
-      for (int i : {0, 1}) {
-        fflush(streams[i]);
-        backups[i] = dup(fileno(streams[i]));
-        std::ignore = freopen("/dev/null", "w", streams[i]);
-      }
-    } else {
-      if (backups[0] == -1) return;
-      std::cout.flush();
-      for (int i : {0, 1}) {
-        fflush(streams[i]);
-        dup2(backups[i], fileno(streams[i]));
-        close(backups[i]);
-        backups[i] = -1;
-      }
-      std::cout.clear();
-    }
+    // clang-format off
+    static int backups[2] = {-1, -1}; FILE* streams[2] = {stdout, stderr};
+    if (silent) { if (backups[0] != -1) return; std::cout.flush(); for (int i : {0, 1}) { fflush(streams[i]); backups[i] = dup(fileno(streams[i])); std::ignore = freopen("/dev/null", "w", streams[i]); } }
+    else { if (backups[0] == -1) return; std::cout.flush(); for (int i : {0, 1}) { fflush(streams[i]); dup2(backups[i], fileno(streams[i])); close(backups[i]); backups[i] = -1; } std::cout.clear(); }
+    // clang-format on
   }
 
   class SilenceScope {
@@ -240,12 +227,11 @@ class MyTest {
       CleanupStaleTempRoots();
     }
 
-    bool is_spawned = false;
+    bool is_spawned = false, use_report = false;
     current_temp_path_.clear();
-    std::vector<std::regex> include_patterns;
-    bool use_report = false;
-    std::string report_output_path;
     test_results_.clear();
+    std::vector<std::regex> include_patterns;
+    std::string report_output_path;
 
     // clang-format off
     for (int i = 1; i < argc; ++i) {
@@ -361,11 +347,8 @@ class MyTest {
       }
       if (expect_failure_) {
         failure = !failure;
-        if (failure) {
-          printf("    Failed : Expected fail but passed.\n");
-        } else {
-          printf("    Passed : Expected fail and failed.\n");
-        }
+        printf(failure ? "    Failed : Expected fail but passed.\n"
+                       : "    Passed : Expected fail and failed.\n");
       }
       return {failure, skipped, message};
     };
@@ -506,11 +489,8 @@ class MyTest {
           printf("\n %s\n", message.c_str());
         }
         if (is_expect_failure) {
-          if (failure) {
-            printf("    Failed : Expected fail but passed.\n");
-          } else {
-            printf("    Passed : Expected fail and failed.\n");
-          }
+          printf(failure ? "    Failed : Expected fail but passed.\n"
+                         : "    Passed : Expected fail and failed.\n");
         }
         if (failure && message.empty()) message = "See console output.";
         if (skipped && message.empty()) message = "Skipped.";
@@ -881,31 +861,24 @@ int main(int argc, char* argv[]) { return RUN_ALL_TESTS(argc, argv); }
   "(" + (std::string((strrchr(__FILE__, '/') ? strrchr(__FILE__, '/') + 1 : __FILE__))) + ":" +    \
       std::to_string(__LINE__) + ")"
 
-#define _FORMAT_ERROR_MESSAGE(x, cond_str, y, message)                                             \
-  std::stringstream __ss;                                                                          \
-  __ss << message << std::string(" ") + _LOC << "\n";                                              \
-  __ss << "  Expected : (" << #x << " " cond_str " " << #y << ")\n";                               \
-  __ss << "    Actual : (" << x << " " cond_str " " << y << ")";
-
-#define _CHECK_CONDITION(cond, x, y, cond_str, message, should_throw)                              \
+#define _CHECK_OP(x, op, y, message, should_throw)                                                 \
   do {                                                                                             \
-    if (cond) {                                                                                    \
-      _FORMAT_ERROR_MESSAGE(x, y, cond_str, message);                                              \
+    [&](auto&& left, auto&& right) {                                                               \
+      if (left op right) return;                                                                   \
+      std::stringstream __ss;                                                                      \
+      __ss << message << std::string(" ") + _LOC << "\n";                                          \
+      __ss << "  Expected : (" << #x << " " #op " " << #y << ")\n";                                \
+      __ss << "    Actual : (" << left << " " #op " " << right << ")";                             \
       MyTest::Instance().PrintCheckResult(__ss.str());                                             \
-      if (should_throw) {                                                                          \
-        throw MyTest::TestAssertException(__ss.str());                                             \
-      } else {                                                                                     \
-        MyTest::Instance().MarkConditionPassed(false);                                             \
-      }                                                                                            \
-    }                                                                                              \
+      if (should_throw) throw MyTest::TestAssertException(__ss.str());                             \
+      MyTest::Instance().MarkConditionPassed(false);                                               \
+    }((x), (y));                                                                                   \
   } while (0)
 
-#define _EXPECT(cond, x, c, y, m) _CHECK_CONDITION(!(cond), x, #c, y, m, false)
-#define _ASSERT(cond, x, c, y, m) _CHECK_CONDITION(!(cond), x, #c, y, m, true)
-#define EXPECT_EQ(x, y) _EXPECT((x) == (y), x, ==, y, "EXPECT_EQ failed")
-#define EXPECT_NE(x, y) _EXPECT((x) != (y), x, !=, y, "EXPECT_NE failed")
-#define ASSERT_EQ(x, y) _ASSERT((x) == (y), x, ==, y, "ASSERT_EQ failed")
-#define ASSERT_NE(x, y) _ASSERT((x) != (y), x, !=, y, "ASSERT_NE failed")
+#define EXPECT_EQ(x, y) _CHECK_OP(x, ==, y, "EXPECT_EQ failed", false)
+#define EXPECT_NE(x, y) _CHECK_OP(x, !=, y, "EXPECT_NE failed", false)
+#define ASSERT_EQ(x, y) _CHECK_OP(x, ==, y, "ASSERT_EQ failed", true)
+#define ASSERT_NE(x, y) _CHECK_OP(x, !=, y, "ASSERT_NE failed", true)
 
 #define EXPECT(cond) EXPECT_EQ(static_cast<bool>(cond), true)
 #define ASSERT(cond) ASSERT_EQ(static_cast<bool>(cond), true)

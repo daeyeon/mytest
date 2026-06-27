@@ -69,6 +69,10 @@ TEST_BEFORE_EACH(Counter) {
   ++counter;
 }
 
+TEST(Counter, First) {
+  ASSERT_EQ(counter, 1);
+}
+
 TEST_AFTER_EACH(Counter) {
   ASSERT(counter > 0);
 }
@@ -76,14 +80,11 @@ TEST_AFTER_EACH(Counter) {
 TEST_AFTER(Counter) {
   counter = 0;
 }
-
-TEST(Counter, First) {
-  ASSERT_EQ(counter, 1);
-}
 ```
 
-Use `TEST_AFTER_ALL(group)` for cleanup that should also run for isolated-only
-groups.
+Use `TEST_AFTER_ALL(group)` for final cleanup or verification after all
+`TEST_ISOLATE` tests in the group finish. `TEST_AFTER(group)` runs after each
+isolated test, not once at the end.
 
 ## Skip a Test
 

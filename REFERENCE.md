@@ -472,6 +472,7 @@ Use this for per-test cleanup or per-test assertions.
 Runs after the group's tests.
 
 Use this to release resources created by `TEST_BEFORE` for normal tests.
+For final work after isolated tests, use `TEST_AFTER_ALL`.
 
 ### `TEST_AFTER_ALL(group)`
 
@@ -482,6 +483,58 @@ Useful for cleanup and cross-process verification.
 Use this for final cleanup or for verifying state collected from isolated
 tests.
 
+#### `TEST_AFTER_ALL` after isolated tests
+
+Use `TEST_AFTER_ALL` for final cleanup or verification after all selected
+`TEST_ISOLATE` tests in the group finish. `TEST_AFTER` runs inside each
+isolated child as part of that test's hook sequence.
+
+```cpp
+TEST_ISOLATE(Files, CrashCase) {
+  WriteSharedTrace();
+}
+
+TEST_ISOLATE(Files, TimeoutCase) {
+  WriteSharedTrace();
+}
+
+TEST_AFTER(Files) {
+  printf("Files/AFTER\n");
+  RemoveSharedTrace();
+}
+```
+
+```text
+[ RUN      ] Files
+[ RUN      ] Files:CrashCase (PID: <pid>)
+Files/AFTER
+[       OK ] Files:CrashCase
+[ RUN      ] Files:TimeoutCase (PID: <pid>)
+Files/AFTER
+[       OK ] Files:TimeoutCase
+[       OK ] Files
+```
+
+Use `TEST_AFTER_ALL` for final cleanup that must run once in the main process
+after those isolated tests.
+
+```cpp
+TEST_AFTER_ALL(Files) {
+  printf("Files/AFTER_ALL\n");
+  RemoveSharedTrace();
+}
+```
+
+```text
+[ RUN      ] Files
+[ RUN      ] Files:CrashCase (PID: <pid>)
+[       OK ] Files:CrashCase
+[ RUN      ] Files:TimeoutCase (PID: <pid>)
+[       OK ] Files:TimeoutCase
+Files/AFTER_ALL
+[       OK ] Files
+```
+
 ## Timeouts
 
 Default timeout: 60000 ms.
@@ -489,9 +542,27 @@ Default timeout: 60000 ms.
 When a test times out, the current test stops and is reported as timed out.
 For files, prefer `TEST_TEMP_PATH()` over manual cleanup.
 
-For `TEST_ISOLATE` tests, the main process reports the timeout.
+Note: normal `TEST` timeouts skip stack unwinding, local destructors, RAII
+cleanup, and lock release.
 
-Use timeouts as a guardrail for tests that may hang.
+```cpp
+struct Guard {
+  ~Guard() { ReleaseLock(); }
+};
+
+TEST(Worker, MayHang, 1000) {
+  Guard guard;  // ~Guard() is not called on timeout
+  RunPossiblyBlockingWork();
+}
+
+TEST_ISOLATE(Worker, OwnsProcessState, 1000) {
+  RunPossiblyBlockingWork();
+}
+```
+
+If a test may time out and cleanup matters, consider `TEST_ISOLATE`. The
+timed-out child process is discarded, so leaked locks, globals, or
+process-local resources do not affect later tests.
 
 ## Command-line Options
 
