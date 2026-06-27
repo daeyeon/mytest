@@ -5,6 +5,20 @@ This directory contains optional helper examples built on top of `mytest.h`.
 These helpers are not part of the core runner. Keep optional test-only features
 here instead of growing the main header.
 
+## Contents
+
+- [`mytest-must-call.h`](#mytest-must-callh)
+  - [`MUST_CALL(f)`](#must_callf)
+  - [`MUST_CALL(f, count)`](#must_callf-count)
+  - [`MUST_NOT_CALL(f)`](#must_not_callf)
+  - [Async callbacks](#async-callbacks)
+  - [Failure timing](#failure-timing)
+- [`mytest-match.h`](#mytest-matchh)
+  - [`EXPECT_MATCH(text, pattern)`](#expect_matchtext-pattern)
+  - [`ASSERT_MATCH(text, pattern)`](#assert_matchtext-pattern)
+  - [`EXPECT_NOT_MATCH(text, pattern)`](#expect_not_matchtext-pattern)
+  - [`ASSERT_NOT_MATCH(text, pattern)`](#assert_not_matchtext-pattern)
+
 ## `mytest-must-call.h`
 
 `mytest-must-call.h` adds callback call-count checks.
@@ -13,7 +27,7 @@ Include it from a test file:
 
 ```cpp
 #include <mytest.h>
-#include "plugins/mytest-must-call.h"
+#include "mytest-must-call.h"
 ```
 
 ### `MUST_CALL(f)`
@@ -62,7 +76,7 @@ TEST(CallVerification, NotCalled) {
 
 Calling `cb()` fails the test after the test body finishes.
 
-## Async callbacks
+### Async callbacks
 
 `MUST_CALL` is useful when an async API reports completion through a callback.
 
@@ -79,7 +93,7 @@ TEST(CallVerification, AsyncCallback) {
 Make sure the async work has completed before the test body exits. The call
 count is checked after the test body finishes.
 
-## Failure timing
+### Failure timing
 
 The helper reports call-count failures after the test body finishes.
 
@@ -93,3 +107,56 @@ TEST(CallVerification, MissingCall) {
 ```
 
 This fails because `cb` was expected once but called zero times.
+
+## `mytest-match.h`
+
+`mytest-match.h` adds regular-expression checks for text.
+
+Include it from a test file:
+
+```cpp
+#include <mytest.h>
+#include "mytest-match.h"
+```
+
+### `EXPECT_MATCH(text, pattern)`
+
+Records a failure if `text` does not match `pattern`.
+
+```cpp
+TEST(Match, ContainsGeneratedId) {
+  EXPECT_MATCH("user-42", "user-[0-9]+");
+}
+```
+
+### `ASSERT_MATCH(text, pattern)`
+
+Stops the current test if `text` does not match `pattern`.
+
+```cpp
+TEST(Match, RequiresStatus) {
+  ASSERT_MATCH("status: ok", "status: (ok|ready)");
+}
+```
+
+### `EXPECT_NOT_MATCH(text, pattern)`
+
+Records a failure if `text` matches `pattern`.
+
+```cpp
+TEST(Match, NoErrorCode) {
+  EXPECT_NOT_MATCH("status: ok", "error-[0-9]+");
+}
+```
+
+### `ASSERT_NOT_MATCH(text, pattern)`
+
+Stops the current test if `text` matches `pattern`.
+
+```cpp
+TEST(Match, RejectsDebugBuildId) {
+  ASSERT_NOT_MATCH("build: release-2026", "debug-[0-9]+");
+}
+```
+
+Patterns are C++ regular expressions. Invalid patterns fail the check.

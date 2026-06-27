@@ -40,6 +40,10 @@
     - [`MUST_CALL(f)`](#must_callf)
     - [`MUST_CALL(f, count)`](#must_callf-count)
     - [`MUST_NOT_CALL(f)`](#must_not_callf)
+    - [`EXPECT_MATCH(text, pattern)`](#expect_matchtext-pattern)
+    - [`ASSERT_MATCH(text, pattern)`](#assert_matchtext-pattern)
+    - [`EXPECT_NOT_MATCH(text, pattern)`](#expect_not_matchtext-pattern)
+    - [`ASSERT_NOT_MATCH(text, pattern)`](#assert_not_matchtext-pattern)
   - [Reporter Extensions](#reporter-extensions)
     - [GTest XML Reporter](#gtest-xml-reporter)
     - [Custom Reporter](#custom-reporter)
@@ -737,7 +741,7 @@ assertion-like features outside the core header.
 
 The
 [test/03-advanced/plugins/mytest-must-call.h](test/03-advanced/plugins/mytest-must-call.h)
-helper is an example. It adds:
+helper adds callback call-count checks.
 
 #### `MUST_CALL(f)`
 
@@ -757,6 +761,34 @@ Example:
 TEST(CallVerification, CalledOnce) {
   auto cb = MUST_CALL([]() {});
   cb();
+}
+```
+
+The
+[test/03-advanced/plugins/mytest-match.h](test/03-advanced/plugins/mytest-match.h)
+helper adds regular-expression checks for text.
+
+#### `EXPECT_MATCH(text, pattern)`
+
+Records a failure if `text` does not match `pattern`.
+
+#### `ASSERT_MATCH(text, pattern)`
+
+Stops the current test if `text` does not match `pattern`.
+
+#### `EXPECT_NOT_MATCH(text, pattern)`
+
+Records a failure if `text` matches `pattern`.
+
+#### `ASSERT_NOT_MATCH(text, pattern)`
+
+Stops the current test if `text` matches `pattern`.
+
+Example:
+
+```cpp
+TEST(Match, ContainsGeneratedId) {
+  EXPECT_MATCH("user-42", "user-[0-9]+");
 }
 ```
 
