@@ -159,8 +159,8 @@ EXPECT_EQ failed (parser-test.cc:42)
 ```
 
 Values are written with `operator<<`. If a type used in `ASSERT_EQ`,
-`ASSERT_NE`, `EXPECT_EQ`, or `EXPECT_NE` cannot be streamed to
-`std::ostream`, the test will not compile. Add an overload for that type:
+`ASSERT_NE`, `EXPECT_EQ`, or `EXPECT_NE` cannot be streamed to `std::ostream`,
+the test will print `<unprintable>`. Add an overload for that type:
 
 ```cpp
 enum class Status {

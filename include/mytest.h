@@ -38,6 +38,7 @@
 #include <system_error>
 #include <thread>
 #include <tuple>
+#include <type_traits>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -116,6 +117,11 @@ class Reporter {
   virtual void OnComplete(const std::vector<TestResult>& results, const Summary& summary,
                           const Options& options) = 0;
 };
+// clang-format off
+template <typename T, typename = void> struct IsStreamable : std::false_type {};
+template <typename T> struct IsStreamable<T, std::void_t<decltype(std::declval<std::ostream&>() << std::declval<const T&>())>> : std::true_type {};
+template <typename T> std::string FormatValue(const T& value) { std::stringstream ss; if constexpr (IsStreamable<T>::value) ss << value; else ss << "<unprintable>"; return ss.str(); }
+// clang-format on
 }  // namespace mytest
 
 extern char** environ;
@@ -235,14 +241,8 @@ class MyTest {
 
     // clang-format off
     for (int i = 1; i < argc; ++i) {
-      std::string arg = argv[i], next = (i + 1 < argc) ? argv[i + 1] : "";
-      auto consume_next = [&]() { i++; return next; };
-      if (arg == "-p" && !next.empty()) {
-        try {
-          std::string p = consume_next();
-          (p[0] == '-' ? exclude_patterns_ : include_patterns).emplace_back(p[0] == '-' ? p.substr(1) : p);
-        } catch (const std::exception& e) { std::cerr << e.what() << std::endl; return 1; }
-      }
+      std::string arg = argv[i], next = (i + 1 < argc) ? argv[i + 1] : ""; auto consume_next = [&]() { i++; return next; };
+      if (arg == "-p" && !next.empty()) { try { std::string p = consume_next(); (p[0] == '-' ? exclude_patterns_ : include_patterns).emplace_back(p[0] == '-' ? p.substr(1) : p); } catch (const std::exception& e) { std::cerr << e.what() << std::endl; return 1; } }
       else if (arg == "-t" && !next.empty()) timeout_ = std::stoi(consume_next());
       else if (arg == "-c") use_color_ = false;
       else if (arg == "-s") silent_ = true;
@@ -254,19 +254,16 @@ class MyTest {
       else if (arg == "-h" || arg == "--help") return PrintUsage(argv[0]);
     }
     if (is_spawned) { if (const char* cwd_env = getenv(kInitialCwdEnv)) { std::ignore = chdir(cwd_env); } }
-    // clang-format on
-
     auto IsTestSelected = [this, &include_patterns](const std::string& name) {
       auto matches = [&](const auto& p) { return std::regex_search(name, p); };
       if (std::any_of(exclude_patterns_.begin(), exclude_patterns_.end(), matches)) return false;
-      return include_patterns.empty() ||
-             std::any_of(include_patterns.begin(), include_patterns.end(), matches);
+      return include_patterns.empty() || std::any_of(include_patterns.begin(), include_patterns.end(), matches);
     };
+    // clang-format on
 
     // Run tests
     int num_success = 0, num_failure = 0, num_skipped = 0;
     int num_ran_tests = 0, num_filtered_tests = 0;
-
     colors_ = {use_color_ ? "\033[0m" : "", use_color_ ? "\033[32m" : "",
                use_color_ ? "\033[31m" : "", use_color_ ? "\033[33m" : ""};
     const char** colors = colors_.data();
@@ -847,9 +844,7 @@ class MyTest {
   do { MyTest::Instance().MarkExpectFailure(true); } while (0)
 
 #define SET_REPORTER(Reporter) MyTest::Instance().SetReporter(std::make_shared<Reporter>());
-
 #define RUN_ALL_TESTS(argc, argv) MyTest::Instance().RunAllTests(argc, argv)
-
 #define TEST_NAME() MyTest::Instance().GetCurrentTestName()
 #define TEST_TEMP_PATH() MyTest::Instance().TempPath()
 
@@ -868,7 +863,8 @@ int main(int argc, char* argv[]) { return RUN_ALL_TESTS(argc, argv); }
       std::stringstream __ss;                                                                      \
       __ss << message << std::string(" ") + _LOC << "\n";                                          \
       __ss << "  Expected : (" << #x << " " #op " " << #y << ")\n";                                \
-      __ss << "    Actual : (" << left << " " #op " " << right << ")";                             \
+      __ss << "    Actual : (" << mytest::FormatValue(left) << " " #op " "                         \
+           << mytest::FormatValue(right) << ")";                                                   \
       MyTest::Instance().PrintCheckResult(__ss.str());                                             \
       if (should_throw) throw MyTest::TestAssertException(__ss.str());                             \
       MyTest::Instance().MarkConditionPassed(false);                                               \
