@@ -593,6 +593,7 @@ class MyTest {
           continue;
         }
         group_failure = group_failure || failure;
+        if (failure) num_failure++;
       }
 
       for (const auto& group_test : group_tests) {

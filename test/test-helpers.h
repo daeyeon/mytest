@@ -32,9 +32,31 @@ inline std::string NormalizeOutput(const std::string& text) {
   return result;
 }
 
-inline std::string ExecuteProc(const std::string& exe_path,
-                               const std::vector<const char*>& args,
-                               int timeout_seconds = 10) {
+struct RunResult {
+  std::string output;
+  int exit_status = -1;
+};
+
+inline std::string GetExecutablePath() {
+  char path[PATH_MAX];
+#ifdef __APPLE__
+  uint32_t bufsize = PATH_MAX;
+  if (_NSGetExecutablePath(path, &bufsize) != 0) return "";
+  char resolved[PATH_MAX];
+  if (realpath(path, resolved) == nullptr) return "";
+  strncpy(path, resolved, PATH_MAX - 1);
+  path[PATH_MAX - 1] = '\0';
+#else
+  ssize_t len = readlink("/proc/self/exe", path, PATH_MAX - 1);
+  if (len <= 0) return "";
+  path[len] = '\0';
+#endif
+  return std::string(path);
+}
+
+inline RunResult ExecuteProcResult(const std::string& exe_path,
+                                   const std::vector<const char*>& args,
+                                   int timeout_seconds = 10) {
   std::vector<const char*> argv_vec = {exe_path.c_str()};
   for (auto arg : args) {
     if (arg) argv_vec.push_back(arg);
@@ -42,7 +64,7 @@ inline std::string ExecuteProc(const std::string& exe_path,
   argv_vec.push_back(nullptr);
 
   int pipefd[2];
-  if (pipe(pipefd) == -1) return "";
+  if (pipe(pipefd) == -1) return {};
 
   posix_spawn_file_actions_t actions;
   posix_spawn_file_actions_init(&actions);
@@ -64,10 +86,10 @@ inline std::string ExecuteProc(const std::string& exe_path,
 
   if (spawn_ret != 0) {
     close(pipefd[0]);
-    return "";
+    return {};
   }
 
-  std::string result;
+  RunResult result;
   char buffer[4096];
   auto start_time = std::chrono::steady_clock::now();
 
@@ -99,7 +121,7 @@ inline std::string ExecuteProc(const std::string& exe_path,
       if (bytes_read <= 0) {
         break;  // EOF or error
       }
-      result.append(buffer, bytes_read);
+      result.output.append(buffer, bytes_read);
     }
 
     if (pfd.revents & (POLLERR | POLLHUP)) { break; }
@@ -112,44 +134,32 @@ inline std::string ExecuteProc(const std::string& exe_path,
     printf("Warning: Process timed out after %d seconds\n", timeout_seconds);
   }
 
-  int status;
-  waitpid(pid, &status, 0);
+  int status = 0;
+  if (waitpid(pid, &status, 0) > 0) {
+    if (WIFEXITED(status)) {
+      result.exit_status = WEXITSTATUS(status);
+    } else if (WIFSIGNALED(status)) {
+      result.exit_status = 128 + WTERMSIG(status);
+    }
+  }
 
   return result;
 }
 
-inline std::string ExecuteSelf(const std::vector<const char*>& args, int timeout_seconds = 10) {
-  char exe_path[PATH_MAX];
-#ifdef __APPLE__
-  uint32_t bufsize = PATH_MAX;
-  if (_NSGetExecutablePath(exe_path, &bufsize) != 0) return "";
-  char resolved[PATH_MAX];
-  if (realpath(exe_path, resolved) == nullptr) return "";
-  strncpy(exe_path, resolved, PATH_MAX - 1);
-  exe_path[PATH_MAX - 1] = '\0';
-#else
-  ssize_t len = readlink("/proc/self/exe", exe_path, PATH_MAX - 1);
-  if (len <= 0) return "";
-  exe_path[len] = '\0';
-#endif
-  return ExecuteProc(exe_path, args, timeout_seconds);
+inline std::string ExecuteProc(const std::string& exe_path,
+                               const std::vector<const char*>& args,
+                               int timeout_seconds = 10) {
+  return ExecuteProcResult(exe_path, args, timeout_seconds).output;
 }
 
-inline std::string GetExecutablePath() {
-  char path[PATH_MAX];
-#ifdef __APPLE__
-  uint32_t bufsize = PATH_MAX;
-  if (_NSGetExecutablePath(path, &bufsize) != 0) return "";
-  char resolved[PATH_MAX];
-  if (realpath(path, resolved) == nullptr) return "";
-  strncpy(path, resolved, PATH_MAX - 1);
-  path[PATH_MAX - 1] = '\0';
-#else
-  ssize_t len = readlink("/proc/self/exe", path, PATH_MAX - 1);
-  if (len <= 0) return "";
-  path[len] = '\0';
-#endif
-  return std::string(path);
+inline RunResult ExecuteSelfResult(const std::vector<const char*>& args, int timeout_seconds = 10) {
+  const std::string exe_path = GetExecutablePath();
+  if (exe_path.empty()) return {};
+  return ExecuteProcResult(exe_path, args, timeout_seconds);
+}
+
+inline std::string ExecuteSelf(const std::vector<const char*>& args, int timeout_seconds = 10) {
+  return ExecuteSelfResult(args, timeout_seconds).output;
 }
 
 // Runs this test binary with args and returns whether marker is emitted before the timeout.
