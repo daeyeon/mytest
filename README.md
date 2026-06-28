@@ -4,9 +4,11 @@ Lean, hassle-free testing utility, my way.
 
 ## Features
 
-- Synchronous and process-isolated test support
+- Header-only test runner with no required linking
+- Process isolation for individual tests or full runs
 - Timeout support for potentially hanging tests
 - Lifecycle hooks with skip/exclude controls
+- Per-test temp directories with automatic cleanup
 - Pluggable reporting (e.g., gtest XML) and CLI configuration
 
 ## Requirements

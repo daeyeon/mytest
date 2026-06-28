@@ -199,7 +199,7 @@ class MyTest {
   void RegisterPostTestTask(std::function<void()> task) { post_test_tasks_.push_back(std::move(task)); }
   void SetReporter(std::shared_ptr<mytest::Reporter> reporter) { reporter_ = std::move(reporter); }
   void SetTempRoot(std::filesystem::path path) { temp_root_ = std::move(path); }
-  std::filesystem::path TempPath() { if (!current_temp_path_.empty()) return each_temp_paths_.try_emplace(current_test_name_, current_temp_path_).first->second; return TempPathFor(current_test_name_); }
+  std::filesystem::path TempPath() { if (!current_temp_path_.empty()) { auto path = each_temp_paths_.try_emplace(current_test_name_, current_temp_path_).first->second; EnsureTempPath(path); return path; } return TempPathFor(current_test_name_); }
   static std::optional<int> MakeTimeout() { return std::nullopt; }
   template <typename T> static std::optional<int> MakeTimeout(T value) { return std::optional<int>{static_cast<int>(value)}; }
   static bool IsMainProcess() { static const pid_t cached_main_pid = []() { if (const char* env_pid = getenv(MyTest::kMainPidEnv)) { return static_cast<pid_t>(std::strtol(env_pid, nullptr, 10)); } return getpid(); }(); return getpid() == cached_main_pid; }
@@ -233,7 +233,7 @@ class MyTest {
       CleanupStaleTempRoots();
     }
 
-    bool is_spawned = false, use_report = false;
+    bool is_spawned = false, use_report = false, list_tests = false;
     current_temp_path_.clear();
     test_results_.clear();
     std::vector<std::regex> include_patterns;
@@ -248,6 +248,7 @@ class MyTest {
       else if (arg == "-s") silent_ = true;
       else if (arg == "-f") force_ = true;
       else if (arg == "-j") job_isolation_ = true;
+      else if (arg == "-l") list_tests = true;
       else if (arg == kSpawnedArg) is_spawned = true;
       else if (arg == kTempPathArg && !next.empty()) current_temp_path_ = consume_next();
       else if (arg == "-r") { if (!reporter_) { std::cerr << "No reporter registered.\n"; return 1; } use_report = true; report_output_path = (!next.empty() && next[0] != '-') ? consume_next() : ""; }
@@ -281,8 +282,11 @@ class MyTest {
       categorized_tests[group_name].push_back(test_pair);
       if (process_tests_.count(name) == 0) group_has_normal[group_name] = true;
     }
-
     // clang-format off
+    if (list_tests) {
+      for (const auto& group_name : group_order) for (const auto& test_pair : categorized_tests[group_name]) printf("%s\n", test_pair.first.c_str());
+      return 0;
+    }
     if (!is_spawned)     printf("%s[==========]%s Running %d test case(s).\n", colors[GREEN], colors[RESET], num_filtered_tests);
     auto PrintStart = [&colors, this](const std::string& name) {
                          printf("%s[ RUN      ]%s %s", colors[GREEN], colors[RESET], name.c_str());
@@ -350,9 +354,9 @@ class MyTest {
       return {failure, skipped, message};
     };
 
-    auto NormalTestExecutor = [this, &colors, &ResultOf, &RunHook](
-                                  const std::string& name, const TestFunction& test,
-                                  const std::string& group_name) -> ExecResult {
+    auto RunNormalTest = [this, &colors, &ResultOf, &RunHook](
+                             const std::string& name, const TestFunction& test,
+                             const std::string& group_name) -> ExecResult {
       result_details_.clear();
       auto temp_cleanup = OnScopeLeave::create([this, name]() { CleanupTempPath(name); });
       bool should_call_after_hook = false;
@@ -379,25 +383,61 @@ class MyTest {
         details.push_back(Clean(std::string(line)));
       }
     };
-
     auto ReadPipe = [&CaptureFailureLine](int fd, std::string& pending_line, std::vector<std::string>& details) {
       char buf[4096];
       for (ssize_t n; (n = read(fd, buf, sizeof(buf))) > 0;) {
-        fwrite(buf, 1, n, stdout);
-        pending_line.append(buf, n);
-        size_t begin = 0;
-        for (size_t end; (end = pending_line.find('\n', begin)) != std::string::npos; begin = end + 1) {
-          CaptureFailureLine(std::string_view(pending_line).substr(begin, end - begin), details);
-        }
+        fwrite(buf, 1, n, stdout); pending_line.append(buf, n); size_t begin = 0;
+        for (size_t end; (end = pending_line.find('\n', begin)) != std::string::npos; begin = end + 1) { CaptureFailureLine(std::string_view(pending_line).substr(begin, end - begin), details); }
         if (begin > 0) pending_line.erase(0, begin);
       }
     };
     // clang-format on
 
-    auto IsolatedTestExecutor = [this, &colors, &CaptureFailureLine, &ReadPipe](
-                                    const std::string& name, const TestFunction& test,
-                                    const std::string group_name = "") -> ExecResult {
-      const std::filesystem::path temp_path = TempPathFor(name);
+    auto MakeExecResult = [this, &colors](const std::string& name, int exit_code,
+                                          std::vector<std::string> details) -> ExecResult {
+      bool failure = false, skipped = false;
+      std::string message;
+      if (exit_code == -2) {
+        failure = true;  // Signal timeout is always a failure
+        message = "Timed out : " + name;
+      } else if (exit_code > 128 && exit_code < 255) {
+        failure = true;  // Signal exits: 128 + signal_number (e.g., 139 for SIGSEGV)
+        int sig = exit_code - 128;
+        const char* sig_name = strsignal(sig);
+        message = "Terminated by signal " + std::to_string(sig) +
+                  (sig_name ? (" (" + std::string(sig_name) + ")") : "");
+        if (locations_.count(name)) message += " " + locations_[name];
+        printf("\n%s%s%s\n", colors[RED], message.c_str(), colors[RESET]);
+      } else if (exit_code >= 0 && exit_code < 16) {
+        // bit 0 (1): FAILURE, bit 1 (2): SKIPPED, bit 2 (4): TIMEOUT, bit 3 (8): EXPECT_FAILURE
+        failure = exit_code & 1;
+        bool is_skipped = exit_code & 2;
+        bool is_timeout = exit_code & 4;
+        bool is_expect_failure = exit_code & 8;
+        if (is_skipped) skipped = true, printf("\n   Skipped : Expected skipped.\n");
+        if (is_timeout) {
+          message = "Timed out : " + name;
+          if (locations_.count(name)) message += " " + locations_[name];
+          printf("\n %s\n", message.c_str());
+        }
+        if (is_expect_failure)
+          printf(failure ? "    Failed : Expected fail but passed.\n"
+                         : "    Passed : Expected fail and failed.\n");
+        if (failure && message.empty()) message = "See console output.";
+        if (skipped && message.empty()) message = "Skipped.";
+      } else {
+        failure = true, message = "Unknown exit code or crash: " + std::to_string(exit_code);
+        if (locations_.count(name)) message += " " + locations_[name];
+        printf("\n%s%s%s\n", colors[RED], message.c_str(), colors[RESET]);
+      }
+      return {failure, skipped, message, details};
+    };
+
+    auto RunIsolatedTestFromParent = [this, &CaptureFailureLine, &ReadPipe, &MakeExecResult](
+                                         const std::string& name, const TestFunction& test,
+                                         const std::string group_name = "") -> ExecResult {
+      // 1. Prepare child inputs: temp path is assigned without creating it.
+      const std::filesystem::path temp_path = TempPathFor(name, false);
       auto temp_cleanup = OnScopeLeave::create([this, name]() { CleanupTempPath(name); });
       char exe_path[PATH_MAX];
       if (!GetExecutablePath(exe_path, sizeof(exe_path))) {
@@ -413,8 +453,7 @@ class MyTest {
       if (silent_) argv_vec.push_back("-s");
       if (job_isolation_) argv_vec.push_back("-j");
       argv_vec.push_back(nullptr);
-
-      // Spawn with pipe to capture child's stdout/stderr
+      // 2. Create a pipe for the child's stdout/stderr.
       int pipe_fd[2];
       if (pipe(pipe_fd) == -1) return {true, false, "Failed to create pipe", {}};
       posix_spawn_file_actions_t actions;
@@ -423,6 +462,7 @@ class MyTest {
       posix_spawn_file_actions_adddup2(&actions, pipe_fd[1], STDERR_FILENO);
       posix_spawn_file_actions_addclose(&actions, pipe_fd[0]);
       posix_spawn_file_actions_addclose(&actions, pipe_fd[1]);
+      // 3. Spawn the isolated child process.
       pid_t worker_pid = -1;
       int spawn_ret = posix_spawn(&worker_pid, exe_path, &actions, nullptr,
                                   const_cast<char* const*>(argv_vec.data()), environ);
@@ -432,8 +472,7 @@ class MyTest {
         close(pipe_fd[0]);
         return {true, false, "Failed to spawn worker process", {}};
       }
-
-      // Wait and forward child's output while retaining only summary detail candidates.
+      // 4. Wait for the child, pipe its output, and collect failure summary lines.
       std::string pending_line;
       std::vector<std::string> details;
       fcntl(pipe_fd[0], F_SETFL, fcntl(pipe_fd[0], F_GETFL) | O_NONBLOCK);
@@ -456,52 +495,12 @@ class MyTest {
       ReadPipe(pipe_fd[0], pending_line, details);  // Read remaining output
       close(pipe_fd[0]);
       if (!pending_line.empty()) { CaptureFailureLine(std::string_view(pending_line), details); }
-
-      bool failure = false, skipped = false;
-      std::string message;
-      if (exit_code == -2) {
-        failure = true;  // Signal timeout is always a failure
-        message = "Timed out : " + name;
-      } else if (exit_code > 128 && exit_code < 255) {
-        failure = true;  // Signal exits: 128 + signal_number (e.g., 139 for SIGSEGV)
-        int sig = exit_code - 128;
-        const char* sig_name = strsignal(sig);
-        message = "Terminated by signal " + std::to_string(sig) +
-                  (sig_name ? (" (" + std::string(sig_name) + ")") : "");
-        if (locations_.count(name)) message += " " + locations_[name];
-        printf("\n%s%s%s\n", colors[RED], message.c_str(), colors[RESET]);
-      } else if (exit_code >= 0 && exit_code < 16) {
-        // bit 0 (1): FAILURE, bit 1 (2): SKIPPED, bit 2 (4): TIMEOUT, bit 3 (8): EXPECT_FAILURE
-        failure = exit_code & 1;
-        bool is_skipped = exit_code & 2;
-        bool is_timeout = exit_code & 4;
-        bool is_expect_failure = exit_code & 8;
-        if (is_skipped) {
-          skipped = true;
-          printf("\n   Skipped : Expected skipped.\n");
-        }
-        if (is_timeout) {
-          message = "Timed out : " + name;
-          if (locations_.count(name)) message += " " + locations_[name];
-          printf("\n %s\n", message.c_str());
-        }
-        if (is_expect_failure) {
-          printf(failure ? "    Failed : Expected fail but passed.\n"
-                         : "    Passed : Expected fail and failed.\n");
-        }
-        if (failure && message.empty()) message = "See console output.";
-        if (skipped && message.empty()) message = "Skipped.";
-      } else {
-        failure = true, message = "Unknown exit code or crash: " + std::to_string(exit_code);
-        if (locations_.count(name)) message += " " + locations_[name];
-        printf("\n%s%s%s\n", colors[RED], message.c_str(), colors[RESET]);
-      }
-      return std::make_tuple(failure, skipped, message, details);
+      return MakeExecResult(name, exit_code, std::move(details));
     };
 
     enum ExitFlag { SUCCESS = 0, FAILURE = 1, SKIPPED = 2, TIMEOUT = 4, EXPECT_FAILURE = 8 };
 
-    auto SpawnedTestExecutor =
+    auto RunIsolatedTestInChild =
         [this, &RunHook](const std::string& name, const TestFunction& test,
                          const std::string& group_name) -> std::tuple<bool, bool, bool, bool> {
       condition_passed_ = true, expect_failure_ = false, current_test_name_ = name;
@@ -534,7 +533,7 @@ class MyTest {
         if (!IsTestSelected(name)) continue;
         const auto group_name = name.substr(0, name.find(':'));
         auto [failure, skipped, timeout, expect_fail] =
-            SpawnedTestExecutor(name, test_pair.second, group_name);
+            RunIsolatedTestInChild(name, test_pair.second, group_name);
         int code = SUCCESS;
         if (failure) code |= FAILURE;
         if (skipped) code |= SKIPPED;
@@ -545,13 +544,29 @@ class MyTest {
       return FAILURE;
     }
 
-    auto TestDispatcher = [this, &NormalTestExecutor, &IsolatedTestExecutor](
+    auto TestDispatcher = [this, &RunNormalTest, &RunIsolatedTestFromParent](
                               const std::string& name, const TestFunction& test,
                               const std::string group_name = "",
                               bool run_in_process = false) -> ExecResult {
       condition_passed_ = true, expect_failure_ = false, current_test_name_ = name;
-      return run_in_process ? IsolatedTestExecutor(name, test, group_name)
-                            : NormalTestExecutor(name, test, group_name);
+      return run_in_process ? RunIsolatedTestFromParent(name, test, group_name)
+                            : RunNormalTest(name, test, group_name);
+    };
+
+    auto RunTestCase = [&](const std::string& name, const TestFunction& test,
+                           const std::string& group_name) {
+      auto [failure, skipped, message, details] =
+          TestDispatcher(name, test, group_name, IsIsolated(name));
+      (failure ? ++num_failure : (skipped ? ++num_skipped : ++num_success));
+      ++num_ran_tests;
+      if (failure && !expect_failure_) printf("\n");
+      PrintEnd(failure, skipped, name);
+      if (auto colon = name.find(':'); colon != std::string::npos) {
+        const std::string suite = name.substr(0, colon), test_name = name.substr(colon + 1);
+        test_results_.push_back(
+            {suite, test_name, failure, skipped, std::move(message), std::move(details)});
+      }
+      return failure;
     };
 
     for (const auto& group_name : group_order) {
@@ -576,28 +591,8 @@ class MyTest {
       for (const auto& group_test : group_tests) {
         const std::string& name = group_test.first;
         const TestFunction& test = group_test.second;
-
         PrintStart(name);
-
-        auto [failure, skipped, message, details] =
-            TestDispatcher(name, test, group_name, IsIsolated(name));
-        (failure ? ++num_failure : (skipped ? ++num_skipped : ++num_success));
-        ++num_ran_tests;
-
-        if (failure && !expect_failure_) printf("\n");
-        PrintEnd(failure, skipped, name);
-
-        auto colon = name.find(':');
-        if (colon != std::string::npos) {
-          TestResult result{name.substr(0, colon),   // suite
-                            name.substr(colon + 1),  // name
-                            failure,
-                            skipped,
-                            std::move(message),
-                            std::move(details)};
-          test_results_.push_back(std::move(result));
-        }
-        group_failure = group_failure || failure;
+        group_failure = RunTestCase(name, test, group_name) || group_failure;
       }
 
       if (!job_isolation_ && has_normal_tests && test_after_.count(group_name)) {
@@ -718,6 +713,7 @@ class MyTest {
       << "  -c            : Disable color output\n"
       << "  -f            : Force mode, run all tests, including skipped ones\n"
       << "  -j            : Job mode, run all tests in separate processes\n"
+      << "  -l            : List selected tests without running them\n"
       << "  -s            : Silent mode (suppress stdout and stderr output)\n"
       << "  -r [FILE]     : Write report via registered reporter (optional FILE)\n"
       << "  -h, --help    : Show this help message\n\n"
@@ -727,7 +723,8 @@ class MyTest {
   void RunPostTestTask() { for (const auto& task : post_test_tasks_) task();post_test_tasks_.clear(); }
   // Temp path rule: <cwd>/.mytest/tmp/<instance-id>/test-<temp-id>
   std::filesystem::path TempRoot() const { const char* cwd = getenv(kInitialCwdEnv); const char* main_pid = getenv(kMainPidEnv); return (temp_root_.empty() ? (cwd ? std::filesystem::path(cwd) : std::filesystem::current_path()) : temp_root_) / ".mytest" / "tmp" / (main_pid ? main_pid : std::to_string(getpid())); }
-  std::filesystem::path TempPathFor(const std::string& key) { if (auto it = each_temp_paths_.find(key); it != each_temp_paths_.end()) { return it->second; } std::ostringstream temp_id; temp_id << "test-" << std::setw(3) << std::setfill('0') << ++temp_path_sequence_; const std::filesystem::path root = TempRoot(); std::error_code ec; std::filesystem::create_directories(root, ec); if (ec) throw std::runtime_error("Failed to create temp root: " + root.string()); const std::filesystem::path path = root / temp_id.str(); std::filesystem::create_directories(path, ec); if (ec) throw std::runtime_error("Failed to create temp path: " + path.string()); return each_temp_paths_[key] = path; }
+  void EnsureTempPath(const std::filesystem::path& path) { std::error_code ec; std::filesystem::create_directories(path, ec); if (ec) throw std::runtime_error("Failed to create temp path: " + path.string()); }
+  std::filesystem::path TempPathFor(const std::string& key, bool create = true) { if (auto it = each_temp_paths_.find(key); it != each_temp_paths_.end()) { if (create) EnsureTempPath(it->second); return it->second; } std::ostringstream temp_id; temp_id << "test-" << std::setw(3) << std::setfill('0') << ++temp_path_sequence_; const std::filesystem::path path = TempRoot() / temp_id.str(); if (create) EnsureTempPath(path); return each_temp_paths_[key] = path; }
   void CleanupTempPath(const std::string& key) { std::error_code ec; if (auto it = each_temp_paths_.find(key); it != each_temp_paths_.end()) { std::filesystem::remove_all(it->second, ec); each_temp_paths_.erase(it); } }
   void CleanupStaleTempRoots() { std::error_code ec; const auto temp_home = TempRoot().parent_path(); if (std::filesystem::is_directory(temp_home, ec)) { for (const auto& entry : std::filesystem::directory_iterator(temp_home, ec)) { if (!entry.is_directory(ec)) continue; const auto name = entry.path().filename().string(); char* end = nullptr; const auto pid = static_cast<pid_t>(std::strtol(name.c_str(), &end, 10)); if (*end == '\0' && pid > 0 && kill(pid, 0) == -1 && errno == ESRCH) { std::filesystem::remove_all(entry.path(), ec); } } } }
   // clang-format on
