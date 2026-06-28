@@ -147,13 +147,13 @@ Output is forwarded in real time. Crashes are reported by signal.
 
 ## Run Every Test in a Separate Process
 
-Use the `-j` CLI option to run every selected test in a separate process:
+Use the `-j` CLI option to run selected tests separately, one process each:
 
 ```shell
 ./test.x -j
 ```
 
-Use files, sockets, or shared memory when job-mode tests need shared state.
+Use files, sockets, or shared memory when these isolated tests need shared state.
 
 ## Filter Tests
 

@@ -1,0 +1,49 @@
+[==========] Running 5 test case(s).
+[ RUN      ] SeparateProcessTests (PID: 28868)
+[ RUN      ] SeparateProcessTests:BasicSync (PID: 28868)
+SeparateProcessTests/BEFORE
+SeparateProcessTests/BEFORE_EACH
+SeparateProcessTests:BasicSync/TEST
+SeparateProcessTests/AFTER_EACH
+SeparateProcessTests/AFTER
+[       OK ] SeparateProcessTests:BasicSync
+[ RUN      ] SeparateProcessTests:BasicSyncWithFailure (PID: 28868)
+SeparateProcessTests/BEFORE
+SeparateProcessTests/BEFORE_EACH
+SeparateProcessTests:BasicSyncWithFailure/TEST
+
+EXPECT_EQ failed (separate-process-test.cc:24)
+  Expected : (1 == 0)
+    Actual : (1 == 0)
+
+ASSERT_EQ failed (separate-process-test.cc:26)
+  Expected : (1 == 0)
+    Actual : (1 == 0)
+    Passed : Expected fail and failed.
+[       OK ] SeparateProcessTests:BasicSyncWithFailure
+[ RUN      ] SeparateProcessTests:BasicTimeout (PID: 28868)
+SeparateProcessTests/BEFORE
+SeparateProcessTests/BEFORE_EACH
+SeparateProcessTests:BasicTimeout/TEST
+
+ Timed out : SeparateProcessTests:BasicTimeout (separate-process-test.cc:32)
+    Passed : Expected fail and failed.
+[       OK ] SeparateProcessTests:BasicTimeout
+[ RUN      ] SeparateProcessTests:BasicSkip (PID: 28868)
+SeparateProcessTests/BEFORE
+SeparateProcessTests/BEFORE_EACH
+SeparateProcessTests:BasicSkip/TEST
+
+   Skipped : Expected skipped.
+[  SKIPPED ] SeparateProcessTests:BasicSkip
+[ RUN      ] SeparateProcessTests:AsyncTest (PID: 28868)
+SeparateProcessTests/BEFORE
+SeparateProcessTests/BEFORE_EACH
+SeparateProcessTests:AsyncTest/TEST
+SeparateProcessTests/AFTER_EACH
+SeparateProcessTests/AFTER
+[       OK ] SeparateProcessTests:AsyncTest
+[       OK ] SeparateProcessTests
+[==========] 5 test case(s) ran.
+[  PASSED  ] 4 test(s)
+[  SKIPPED ] 1 test(s)

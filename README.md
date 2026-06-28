@@ -4,10 +4,8 @@ Lean, hassle-free testing utility, my way.
 
 ## Features
 
-- Header-only test runner with no required linking
+- Timeout, lifecycle hook, skip, and exclude controls
 - Process isolation for individual tests or full runs
-- Timeout support for potentially hanging tests
-- Lifecycle hooks with skip/exclude controls
 - Per-test temp directories with automatic cleanup
 - Pluggable reporting (e.g., gtest XML) and CLI configuration
 
@@ -91,7 +89,8 @@ Options:
   -t TIMEOUT    : Set the timeout value in milliseconds (default: 60000)
   -c            : Disable color output
   -f            : Force mode, run all tests, including skipped ones
-  -j            : Job mode, run all tests in separate processes
+  -j            : Run selected tests separately, one process each
+  -l            : List selected tests without running them
   -s            : Silent mode (suppress stdout and stderr output)
   -r [FILE]     : Write report via registered reporter (optional FILE)
   -h, --help    : Show this help message

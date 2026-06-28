@@ -6,18 +6,18 @@
 #include "../../shared-memory.h"
 #include "../../test-helpers.h"
 
-// Single fixture for all tests in job mode
-static constexpr const char* FIXTURE_NAME = "/job_mode_fixture";
+// Single fixture for all tests in separate-process mode.
+static constexpr const char* FIXTURE_NAME = "/separate_process_fixture";
 
 /*--- Basic Tests ---*/
-TEST(JobModeTests, BasicSync) {
+TEST(SeparateProcessTests, BasicSync) {
   printf("%s/TEST\n", TEST_NAME());
   WithShmMemory<Fixture>(FIXTURE_NAME, [](auto& f) {
     f.count++;
   });
 }
 
-TEST(JobModeTests, BasicSyncWithFailure) {
+TEST(SeparateProcessTests, BasicSyncWithFailure) {
   printf("%s/TEST\n", TEST_NAME());
   WithShmMemory<Fixture>(FIXTURE_NAME, [](auto& f) {
     TEST_EXPECT_FAILURE();
@@ -29,13 +29,13 @@ TEST(JobModeTests, BasicSyncWithFailure) {
   });
 }
 
-TEST(JobModeTests, BasicTimeout, 500) {
+TEST(SeparateProcessTests, BasicTimeout, 500) {
   printf("%s/TEST\n", TEST_NAME());
   TEST_EXPECT_FAILURE();
   std::this_thread::sleep_for(std::chrono::milliseconds(800));
 }
 
-TEST(JobModeTests, BasicSkip) {
+TEST(SeparateProcessTests, BasicSkip) {
   printf("%s/TEST\n", TEST_NAME());
   WithShmMemory<Fixture>(FIXTURE_NAME, [](auto& f) {
     f.skip++;
@@ -43,7 +43,7 @@ TEST(JobModeTests, BasicSkip) {
   });
 }
 
-TEST(JobModeTests, AsyncTest) {
+TEST(SeparateProcessTests, AsyncTest) {
   printf("%s/TEST\n", TEST_NAME());
   WithShmMemory<Fixture>(FIXTURE_NAME, [](auto& f) {
     std::future<void> async_future = std::async(std::launch::async, [&f]() {
@@ -55,45 +55,45 @@ TEST(JobModeTests, AsyncTest) {
 }
 
 /*--- Hooks: Per-Test ---*/
-TEST_BEFORE_EACH(JobModeTests) {
-  printf("JobModeTests/BEFORE_EACH\n");
+TEST_BEFORE_EACH(SeparateProcessTests) {
+  printf("SeparateProcessTests/BEFORE_EACH\n");
   WithShmMemory<Fixture>(FIXTURE_NAME, [](auto& f) {
     f.before_each++;
   });
 }
 
-TEST_AFTER_EACH(JobModeTests) {
-  printf("JobModeTests/AFTER_EACH\n");
+TEST_AFTER_EACH(SeparateProcessTests) {
+  printf("SeparateProcessTests/AFTER_EACH\n");
   WithShmMemory<Fixture>(FIXTURE_NAME, [](auto& f) {
     f.after_each++;
   });
 }
 
 /*--- Hooks: Suite-Level ---*/
-TEST_BEFORE(JobModeTests) {
-  printf("JobModeTests/BEFORE\n");
+TEST_BEFORE(SeparateProcessTests) {
+  printf("SeparateProcessTests/BEFORE\n");
   WithShmMemory<Fixture>(FIXTURE_NAME, [](auto& f) {
     f.before++;
     f.main_thread_id = std::this_thread::get_id();
   });
 }
 
-TEST_AFTER(JobModeTests) {
-  printf("JobModeTests/AFTER\n");
+TEST_AFTER(SeparateProcessTests) {
+  printf("SeparateProcessTests/AFTER\n");
   WithShmMemory<Fixture>(FIXTURE_NAME, [](auto& f) {
     // Clean up (no verification needed, hooks are basic validation in 01-basics)
     ShmRegion<Fixture>::OpenOrCreate(FIXTURE_NAME).Remove();
   });
 }
 
-TEST(JobModeSnapshot, VerifyJobModeOutput) {
+TEST(SeparateProcessSnapshot, VerifySeparateProcessOutput) {
   if (getenv("IS_SPAWNED_CHILD") != nullptr) {
     TEST_SKIP("Already in spawned child process - prevent recursive execution");
   }
 
   printf("%s/TEST\n", TEST_NAME());
   bool result = VerifySnapshotOutput(
-      {"-p", "^JobModeTests", "-j", "-c"},
-      "test/02-options/job-mode/job-mode-test.out");
+      {"-p", "^SeparateProcessTests", "-j", "-c"},
+      "test/02-options/separate-process/separate-process-test.out");
   EXPECT_EQ(true, result);
 }

@@ -572,7 +572,8 @@ Options:
   -c            : Disable color output
   -f            : Force mode, run all tests, including skipped ones
   -h, --help    : Show the help message
-  -j            : Job mode, run all tests in separate processes
+  -j            : Run selected tests separately, one process each
+  -l            : List selected tests without running them
   -p "PATTERN"  : Include tests matching PATTERN
   -p "-PATTERN" : Exclude tests matching PATTERN
   -r [FILE]     : Write report via registered reporter
@@ -606,10 +607,10 @@ behavior.
 `-h` and `--help` print the command-line option summary and return without
 running tests.
 
-### Job Mode
+### Separate Process Mode
 
-`-j` enables job mode. Every selected test runs in a separate process,
-including tests declared with `TEST`.
+`-j` runs selected tests separately, one process each, including tests declared
+with `TEST`. The parent runner schedules selected tests sequentially.
 
 ```shell
 ./test.x -j

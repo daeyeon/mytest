@@ -205,7 +205,7 @@ class MyTest {
   static bool IsMainProcess() { static const pid_t cached_main_pid = []() { if (const char* env_pid = getenv(MyTest::kMainPidEnv)) { return static_cast<pid_t>(std::strtol(env_pid, nullptr, 10)); } return getpid(); }(); return getpid() == cached_main_pid; }
   static const char* GetCurrentTestName() { return current_test_name_.c_str(); }
   bool ShouldRunInProcess(const std::string& name) const { return process_tests_.count(name) > 0; }
-  bool IsIsolated(std::optional<std::string> maybe_name = std::nullopt) const { return job_isolation_ || (maybe_name ? ShouldRunInProcess(*maybe_name) : false); }
+  bool IsIsolated(std::optional<std::string> maybe_name = std::nullopt) const { return isolate_all_ || (maybe_name ? ShouldRunInProcess(*maybe_name) : false); }
   int GetTestTimeout(const std::string& name) const { auto it = test_timeouts_.find(name); return it != test_timeouts_.end() ? it->second : timeout_; }
   static bool GetExecutablePath(char* path, size_t size) {
 #ifdef __APPLE__
@@ -247,7 +247,7 @@ class MyTest {
       else if (arg == "-c") use_color_ = false;
       else if (arg == "-s") silent_ = true;
       else if (arg == "-f") force_ = true;
-      else if (arg == "-j") job_isolation_ = true;
+      else if (arg == "-j") isolate_all_ = true;
       else if (arg == "-l") list_tests = true;
       else if (arg == kSpawnedArg) is_spawned = true;
       else if (arg == kTempPathArg && !next.empty()) current_temp_path_ = consume_next();
@@ -451,7 +451,7 @@ class MyTest {
           timeout.c_str(), kSpawnedArg, kTempPathArg,    temp_path_arg.c_str()};
       if (!use_color_) argv_vec.push_back("-c");
       if (silent_) argv_vec.push_back("-s");
-      if (job_isolation_) argv_vec.push_back("-j");
+      if (isolate_all_) argv_vec.push_back("-j");
       argv_vec.push_back(nullptr);
       // 2. Create a pipe for the child's stdout/stderr.
       int pipe_fd[2];
@@ -577,7 +577,7 @@ class MyTest {
 
       PrintStart(group_name);
 
-      if (!job_isolation_ && has_normal_tests && test_before_.count(group_name)) {
+      if (!isolate_all_ && has_normal_tests && test_before_.count(group_name)) {
         auto [failure, skipped, message, details] =
             TestDispatcher(group_name, test_before_[group_name]);
         if (skipped) {
@@ -595,7 +595,7 @@ class MyTest {
         group_failure = RunTestCase(name, test, group_name) || group_failure;
       }
 
-      if (!job_isolation_ && has_normal_tests && test_after_.count(group_name)) {
+      if (!isolate_all_ && has_normal_tests && test_after_.count(group_name)) {
         auto [failure, _1, _2, _3] = TestDispatcher(group_name, test_after_[group_name]);
         group_failure = group_failure || failure;
         if (failure) num_failure++;
@@ -699,7 +699,7 @@ class MyTest {
   static constexpr const char* kInitialCwdEnv = "MYTEST_INITIAL_CWD";
   static constexpr const char* kSpawnedArg = "--internal-spawned";
   static constexpr const char* kTempPathArg = "--internal-temp-path";
-  static constexpr const char* kCalVersion = "26.06.27";
+  static constexpr const char* kCalVersion = "26.06.28";
   inline static std::string current_test_name_;
 
   // clang-format off
@@ -712,7 +712,7 @@ class MyTest {
       << "  -t TIMEOUT    : Set the timeout value in milliseconds (default: " << timeout_ << ")\n"
       << "  -c            : Disable color output\n"
       << "  -f            : Force mode, run all tests, including skipped ones\n"
-      << "  -j            : Job mode, run all tests in separate processes\n"
+      << "  -j            : Run selected tests separately, one process each\n"
       << "  -l            : List selected tests without running them\n"
       << "  -s            : Silent mode (suppress stdout and stderr output)\n"
       << "  -r [FILE]     : Write report via registered reporter (optional FILE)\n"
@@ -731,7 +731,7 @@ class MyTest {
 
   int timeout_{kDefaultTimeoutMS};
   bool force_{false};
-  bool job_isolation_{false};
+  bool isolate_all_{false};
   bool use_color_{true};
   bool silent_{false};
   bool condition_passed_{true};
